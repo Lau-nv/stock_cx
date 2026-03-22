@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f9;
+      margin: 0;
+      padding: 0;
+    }
+
+    form {
+      width: 100%;
+      background: #fff;
+      padding: 15px;
+      box-sizing: border-box;
+    }
+
+    label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 5px;
+      margin-top: 10px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #4CAF50;
+      box-shadow: 0 0 5px rgba(76, 175, 80, 0.3);
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    button:hover {
+      background-color: #45a049;
+    }
+
+    .mensaje {
+      text-align: center;
+      font-weight: bold;
+      padding: 10px;
+      margin-top: 15px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      background-color: #f9f9f9;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .mensaje.exito {
+      color: #155724;
+      background-color: #d4edda;
+      border-color: #c3e6cb;
+    }
+
+    .mensaje.error {
+      color: #721c24;
+      background-color: #f8d7da;
+      border-color: #f5c6cb;
+    }
+
+    /* Modal */
+    #modalOverlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+    #modalCard {
+      background: white;
+      width: 90%;
+      max-width: 520px;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    #modalCard h3 { margin: 0 0 8px; text-align:center; }
+
+    /* Tabla de Liberaciones */
+    .tablaWrap {
+      max-height: 320px;
+      overflow: auto;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      display:none;
+    }
+    .tablaConfirm {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+    .tablaConfirm thead th {
+      position: sticky; top: 0; z-index: 1;
+      background: #f3f4f6; color: #111827;
+      text-align: left; padding: 8px 10px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .tablaConfirm tbody td {
+      padding: 8px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top;
+    }
+    .tablaConfirm tbody tr:nth-child(even) { background: #fafafa; }
+    .tablaConfirm tfoot td {
+      background: #fff; padding: 10px; border-top: 1px solid #e5e7eb;
+    }
+
+    /* Resumen EGRESO */
+    #resumenEgreso {
+      display:none;
+      background:#f7f7f7; border:1px solid #e5e5e5;
+      border-radius:8px; padding:10px; font-size:13px;
+      white-space:pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <form id="formulario" onsubmit="enviarFormulario(event)">
+    <label>Tipo de ajuste:</label>
+    <select id="ajuste" name="ajuste" required onchange="onTipoChange()">
+      <option value="" selected disabled hidden>Seleccioná tipo de ajuste</option>
+      <option value="Ingreso">Ingreso</option>
+  <option value="Egreso">Egreso</option>
+      <option value="Ingreso desde Liberaciones">Ingreso desde Liberaciones</option>
+    </select>
+
+    <!-- Solo EGRESO: origen -->
+    <div id="grupoEgreso" style="display:none;">
+      <label>¿De dónde sale el implante?</label>
+      <select id="origenTipo" name="origenTipo" onchange="onOrigenChange()">
+        <option value="" selected disabled hidden>Seleccioná origen</option>
+        <option value="Depo">Depo (Stock_Repo)</option>
+        <option value="Caja">Caja (Stock_Cajas)</option>
+      </select>
+
+      <div id="grupoCaja" style="display:none;">
+        <label>Caja Origen:</label>
+        <!-- Autocomplete input para Caja Origen en Ajuste -->
+        <input type="text" id="origenCaja" name="origenCaja" list="cajasListAjuste" />
+        <datalist id="cajasListAjuste"></datalist>
+      </div>
+    </div>
+
+    <!-- Botón Búsqueda Liberaciones (fuera del grupo manual) -->
+    <div id="grupoBusquedaLib" style="display:none; margin: 15px 0;">
+      <button type="button" id="btnBuscarLib" onclick="buscarLiberaciones()" style="background-color: #2196F3;">
+        Buscar Liberaciones Pendientes
+      </button>
+    </div>
+
+    <!-- Manual (Ingreso / Egreso) -->
+    <div id="grupoManual">
+      <label>Código de producto:</label>
+      <input type="text" id="codigo" name="codigo" required>
+
+      <label>Lote:</label>
+      <input type="text" id="lote" name="lote" required>
+
+      <label>Cantidad:</label>
+      <input type="number" id="cantidad" name="cantidad" min="1" required>
+    </div>
+
+    <label>Comentario u observación:</label>
+    <textarea id="observaciones" name="observaciones" rows="3"></textarea>
+
+    <button type="submit" id="btnAjustar">Ajustar Stock</button>
+
+    <div id="mensaje" class="mensaje"></div>
+  </form>
+
+  <!-- Modal de confirmación -->
+  <div id="modalOverlay">
+    <div id="modalCard">
+      <h3 id="modalTitulo">Confirmar</h3>
+
+      <!-- Tabla Liberaciones -->
+      <div class="tablaWrap" id="tablaWrap">
+        <table id="tablaLista" class="tablaConfirm">
+          <thead>
+            <tr>
+              <th style="width: 38%;">Código</th>
+              <th style="width: 42%;">Lote</th>
+              <th style="width: 20%; text-align: right;">Cantidad</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2" style="text-align:right; font-weight:600;">Total</td>
+              <td id="tablaTotal" style="text-align:right; font-weight:700;"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- Resumen EGRESO -->
+      <div id="resumenEgreso"></div>
+
+      <div style="text-align:center; margin-top: 12px;">
+        <button class="ok" id="btnConfirmarModal" style="padding:8px 14px; border:0; border-radius:8px; background:#4CAF50; color:#fff; font-weight:600; cursor:pointer;">Confirmar</button>
+        <button class="cancel" id="btnCancelarModal" style="padding:8px 14px; border:0; border-radius:8px; background:#ddd; font-weight:600; cursor:pointer;">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let liberacionesPendientes = []; // [{rowIndex, codigo, lote, cantidad}, ...]
+
+    function mostrarMensaje(msg, tipo) {
+      const mensaje = document.getElementById("mensaje");
+      mensaje.innerText = msg;
+      mensaje.className = "mensaje " + (tipo || "");
+    }
+
+    function abrirModal(titulo) {
+      document.getElementById("modalTitulo").textContent = titulo || "Confirmar";
+      document.getElementById("modalOverlay").style.display = "flex";
+    }
+    function cerrarModal() {
+      document.getElementById("modalOverlay").style.display = "none";
+    }
+
+    // Tipo de ajuste -> UI
+    function onTipoChange() {
+      const tipo = document.getElementById("ajuste").value;
+      const grupoManual = document.getElementById("grupoManual");
+      const grupoEgreso = document.getElementById("grupoEgreso");
+
+      if (tipo === "Ingreso desde Liberaciones") {
+        grupoManual.style.display = "none"; // Ocultamos campos de entrada
+        grupoEgreso.style.display = "none";
+        document.getElementById("grupoBusquedaLib").style.display = "block";
+
+        // Mover el botón fuera del grupoManual para que sea visible
+        const btnBuscar = document.getElementById("grupoBusquedaLib");
+        if (btnBuscar.parentElement.id === "grupoManual") {
+          document.getElementById("formulario").insertBefore(btnBuscar, grupoManual);
+        }
+
+        // Set observación por defecto si está vacío
+        const obs = document.getElementById("observaciones");
+        if (!obs.value.trim()) obs.value = "LIBERACIÓN";
+
+        // Nota: no realizamos la búsqueda automáticamente al cambiar el tipo.
+        // El usuario debe presionar el botón "Buscar Liberaciones Pendientes".
+        // Limpiamos mensajes previos.
+        mostrarMensaje('', '');
+
+      } else if (tipo === "Egreso") {
+        grupoManual.style.display = "block";
+        grupoEgreso.style.display = "block";
+        document.getElementById("grupoBusquedaLib").style.display = "none";
+        habilitarCamposManual();
+      } else {
+        // Ingreso manual
+        grupoManual.style.display = "block";
+        grupoEgreso.style.display = "none";
+        document.getElementById("grupoBusquedaLib").style.display = "none";
+        habilitarCamposManual();
+      }
+    }
+
+    // Origen (Depo/Caja) -> UI (simplified and safer)
+    function populateCajasListAjuste(callback) {
+      google.script.run.withSuccessHandler(function(cajas) {
+        const dl = document.getElementById('cajasListAjuste');
+        dl.innerHTML = '';
+        (cajas || []).forEach(c => {
+          const opt = document.createElement('option'); opt.value = c; dl.appendChild(opt);
+        });
+        if (typeof callback === 'function') callback(cajas);
+      }).obtenerCajasDisponibles();
+    }
+
+    function onOrigenChange() {
+      const origen = document.getElementById("origenTipo").value;
+      const grupoCaja = document.getElementById("grupoCaja");
+      const grupoManual = document.getElementById("grupoManual");
+      const grupoEgreso = document.getElementById("grupoEgreso");
+      const tipo = document.getElementById("ajuste").value;
+
+      if (origen === "Caja") {
+        // mostrar el grupo de caja y precargar sugerencias
+        grupoCaja.style.display = 'block';
+        populateCajasListAjuste();
+      } else {
+        grupoCaja.style.display = 'none';
+        document.getElementById('origenCaja').value = '';
+      }
+    }
+
+    // Resumen modal para EGRESO
+    function renderResumenEgreso(datos) {
+      document.getElementById('tablaWrap').style.display = 'none';
+      const box = document.getElementById('resumenEgreso');
+      box.style.display = 'block';
+      const origenLabel = datos.origenTipo === 'Depo' ? 'Depo (Stock_Repo)' : `Caja: ${datos.origenCaja}`;
+      const obs = (datos.observaciones || 'N/A');
+      const resumen =
+`🧾 Confirmar EGRESO
+
+Código:   ${datos.codigo}
+Lote:     ${datos.lote}
+Cantidad: ${datos.cantidad}
+Origen:   ${origenLabel}
+Obs.:     ${obs}
+
+¿Deseás confirmar este egreso?`;
+      box.textContent = resumen;
+    }
+
+    // (Distribución eliminada del formulario de Ajuste de Stock)
+
+    // Resumen modal para INGRESO (confirmación previa al registro)
+    function renderResumenIngreso(datos) {
+      document.getElementById('tablaWrap').style.display = 'none';
+      const box = document.getElementById('resumenEgreso');
+      box.style.display = 'block';
+      const destinoLabel = datos.cajaDestino ? `Caja Destino: ${datos.cajaDestino}` : 'Caja Destino: N/A';
+      const obs = (datos.observaciones || 'N/A');
+      const resumen =
+`🧾 Confirmar INGRESO
+
+Código:   ${datos.codigo}
+Lote:     ${datos.lote}
+Cantidad: ${datos.cantidad}
+Destino:  ${destinoLabel}
+Obs.:     ${obs}
+
+¿Deseás confirmar este ingreso?`;
+      box.textContent = resumen;
+    }
+
+    // Submit del formulario
+    function enviarFormulario(event) {
+      event.preventDefault();
+      const btn = document.getElementById("btnAjustar");
+      const tipo = document.getElementById("ajuste").value;
+      const datos = Object.fromEntries(new FormData(document.getElementById("formulario")));
+      if (!datos.observaciones || datos.observaciones.trim() === "") {
+        datos.observaciones = "N/A";
+      }
+
+  if (tipo === "Egreso") {
+        if (!datos.origenTipo) {
+          mostrarMensaje("⚠️ Elegí de dónde sale el implante (Depo o Caja).", "error");
+          return;
+        }
+        if (datos.origenTipo === "Caja" && !datos.origenCaja) {
+          mostrarMensaje("⚠️ Elegí la caja de origen.", "error");
+          return;
+        }
+        renderResumenEgreso({
+          codigo: datos.codigo,
+          lote: datos.lote,
+          cantidad: datos.cantidad,
+          origenTipo: datos.origenTipo,
+          origenCaja: datos.origenCaja || '',
+          observaciones: datos.observaciones
+        });
+
+        document.getElementById("btnConfirmarModal").onclick = function() {
+          cerrarModal();
+          btn.disabled = true;
+          mostrarMensaje("⌛ Procesando...", "");
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (!msg) {
+                mostrarMensaje("❌ Error inesperado. Verificá los datos.", "error");
+              } else if (msg.startsWith("✅")) {
+                mostrarMensaje(msg, "exito");
+                document.getElementById("codigo").focus();
+              } else {
+                mostrarMensaje(msg, "error");
+              }
+              btn.disabled = false;
+            })
+            .withFailureHandler(err => {
+              mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
+              btn.disabled = false;
+            })
+            .registrarStockRepo(datos);
+        };
+        document.getElementById("btnCancelarModal").onclick = function() {
+          cerrarModal();
+          mostrarMensaje("❌ Operación cancelada por el usuario.", "error");
+        };
+        abrirModal("Confirmar EGRESO");
+        return;
+      }
+
+      // (Distribución eliminada del formulario de Ajuste de Stock)
+
+      // Ingreso manual normal -> mostrar modal de confirmación
+      if (tipo === "Ingreso") {
+        // preparar resumen y abrir modal
+        renderResumenIngreso({
+          codigo: datos.codigo,
+          lote: datos.lote,
+          cantidad: datos.cantidad,
+          cajaDestino: datos.origenCaja || '',
+          observaciones: datos.observaciones
+        });
+
+        document.getElementById('btnConfirmarModal').onclick = function() {
+          cerrarModal();
+          btn.disabled = true;
+          mostrarMensaje("⌛ Procesando...", "");
+          google.script.run
+            .withSuccessHandler(msg => {
+              if (!msg) {
+                mostrarMensaje("❌ Error inesperado. Verificá los datos.", "error");
+              } else if (msg.startsWith("✅")) {
+                mostrarMensaje(msg, "exito");
+                document.getElementById("formulario").reset();
+              } else {
+                mostrarMensaje(msg, "error");
+              }
+              btn.disabled = false;
+            })
+            .withFailureHandler(err => {
+              mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
+              btn.disabled = false;
+            })
+            .registrarStockRepo(datos);
+        };
+
+        document.getElementById('btnCancelarModal').onclick = function() {
+          cerrarModal();
+          mostrarMensaje("❌ Operación cancelada por el usuario.", "error");
+        };
+
+        abrirModal("Confirmar INGRESO");
+        return;
+      }
+
+      // Ingreso desde Liberaciones: la confirmación se maneja en el modal
+      mostrarMensaje("ℹ️ Para 'Ingreso desde Liberaciones' usá el botón Confirmar del modal.", "");
+    }
+
+    // Confirmación de Liberaciones (usa el modal)
+    function confirmarIngresoLiberaciones() {
+      cerrarModal();
+      const btn = document.getElementById("btnAjustar");
+      btn.disabled = true;
+      const observaciones = (document.getElementById("observaciones").value || "LIBERACIÓN").trim() || "LIBERACIÓN";
+      google.script.run
+        .withSuccessHandler(msg => {
+          if (!msg) {
+            mostrarMensaje("❌ Error inesperado.", "error");
+          } else if (msg.startsWith("✅")) {
+            mostrarMensaje(msg, "exito");
+            liberacionesPendientes = [];
+          } else {
+            mostrarMensaje(msg, "error");
+          }
+          btn.disabled = false;
+        })
+        .withFailureHandler(err => {
+          mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
+          btn.disabled = false;
+        })
+        .registrarIngresoDesdeLiberaciones(liberacionesPendientes, observaciones);
+    }
+
+    // Habilitar/deshabilitar campos de ingreso manual
+    function habilitarCamposManual(habilitar = true) {
+      document.getElementById("codigo").readOnly = !habilitar;
+      document.getElementById("lote").readOnly = !habilitar;
+      document.getElementById("cantidad").readOnly = !habilitar;
+      if (habilitar) {
+        document.getElementById("codigo").value = "";
+        document.getElementById("lote").value = "";
+        document.getElementById("cantidad").value = "";
+      }
+    }
+
+    // Renderiza la lista de liberaciones en la tabla del modal
+    function renderListaEnTabla(items) {
+      const tbody = document.querySelector('#tablaLista tbody');
+      tbody.innerHTML = '';
+      let total = 0;
+      (items || []).forEach(it => {
+        const tr = document.createElement('tr');
+        const tdCod = document.createElement('td'); tdCod.textContent = it.codigo || '';
+        const tdLote = document.createElement('td'); tdLote.textContent = it.lote || '';
+        const tdCant = document.createElement('td'); tdCant.style.textAlign = 'right'; tdCant.textContent = (it.cantidad || 0).toString();
+        tr.appendChild(tdCod);
+        tr.appendChild(tdLote);
+        tr.appendChild(tdCant);
+        tbody.appendChild(tr);
+        total += Number(it.cantidad || 0);
+      });
+      document.getElementById('tablaTotal').textContent = total > 0 ? total.toString() : '';
+    }
+
+    // Buscar liberaciones pendientes
+    function buscarLiberaciones() {
+      mostrarMensaje("⌛ Buscando liberaciones pendientes...", "");
+      google.script.run
+        .withSuccessHandler(items => {
+          liberacionesPendientes = items || [];
+          if (liberacionesPendientes.length === 0) {
+            mostrarMensaje("✅ No hay liberaciones pendientes para ingresar.", "exito");
+          } else {
+            renderListaEnTabla(liberacionesPendientes);
+            document.getElementById('resumenEgreso').style.display = 'none';
+            document.getElementById('tablaWrap').style.display = 'block';
+
+            document.getElementById("btnConfirmarModal").onclick = confirmarIngresoLiberaciones;
+            document.getElementById("btnCancelarModal").onclick = () => { 
+              cerrarModal(); 
+              mostrarMensaje("❌ Operación cancelada por el usuario.", "error"); 
+            };
+
+            abrirModal("Confirmar Ingreso desde Liberaciones");
+            mostrarMensaje("ℹ️ Se encontraron liberaciones pendientes. Revisá el detalle y confirmá.", "");
+          }
+        })
+        .withFailureHandler(err => {
+          mostrarMensaje("❌ Error al buscar liberaciones: " + err.message, "error");
+        })
+        .obtenerLiberacionesPendientes();
+    }
+
+    // Wire up inicial
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById("codigo").focus();
+      document.getElementById("btnCancelarModal").onclick = cerrarModal;
+      // precargar sugerencias de cajas para autocompletar
+      populateCajasListAjuste();
+    });
+  </script>
+</body>
+</html>

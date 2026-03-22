@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f9;
+      margin: 0;
+      padding: 0;
+    }
+    form {
+      width: 100%;
+      background: #fff;
+      padding: 15px;
+      box-sizing: border-box;
+    }
+    label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 5px;
+      margin-top: 10px;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #4CAF50;
+      box-shadow: 0 0 5px rgba(76, 175, 80, 0.3);
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .mensaje {
+      text-align: center;
+      font-weight: bold;
+      padding: 10px;
+      margin-top: 15px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      background-color: #f9f9f9;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .mensaje.exito {
+      color: #155724;
+      background-color: #d4edda;
+      border-color: #c3e6cb;
+    }
+    .mensaje.error {
+      color: #721c24;
+      background-color: #f8d7da;
+      border-color: #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <form id="formulario" onsubmit="enviarFormulario(event)">
+    <label>Lectura QR:</label>
+    <input type="text" id="campoQR" placeholder="Escanear código QR..." autocomplete="off" onkeypress="return event.key !== 'Enter';">
+
+    <label>Código de Producto:</label>
+    <input type="text" id="codigo" name="codigo" required>
+
+    <label>Lote:</label>
+    <input type="text" id="lote" name="lote" required>
+
+    <label>Tipo de Movimiento:</label>
+    <select name="tipoMovimiento" id="tipoMovimiento" onchange="actualizarCampos()" required>
+      <option value="" disabled selected hidden>Selecciona tipo de movimiento</option>
+      <option value="Reposición">Reposición</option>
+      <option value="Consumo">Consumo</option>
+      <option value="Distribución">Distribución</option>
+      <option value="Entre Cajas">Entre Cajas</option>
+      <option value="Reposición Caja Completa">Reposición Caja Completa</option>
+    </select>
+
+    <label id="label-paciente">Paciente:</label>
+    <input type="text" id="paciente" name="paciente">
+
+    <label id="label-cliente">Cliente:</label>
+    <input type="text" id="cliente" name="cliente">
+
+    <label id="label-cantidad" style="display:none;">Cantidad:</label>
+    <input type="number" id="cantidad" name="cantidad" min="1" style="display:none;">
+
+    <label id="label-origen-tipo" style="display:none;">Origen:</label>
+    <select id="origenTipo" name="origenTipo" style="display:none;" onchange="onOrigenTipoChange()">
+      <option value="" selected disabled hidden>Seleccioná origen</option>
+      <option value="Depo">Depo (Stock_Repo)</option>
+      <option value="Caja">Caja (Stock_Cajas)</option>
+    </select>
+
+  <label id="label-caja-origen" style="display:none;">Caja Origen:</label>
+  <!-- Autocomplete input para Caja Origen -->
+  <input type="text" id="caja_origen" name="caja_origen" list="cajasList" style="display:none;" />
+
+  <label id="label-caja-destino">Caja Destino:</label>
+  <!-- Autocomplete input para Caja Destino -->
+  <input type="text" id="caja_destino" name="caja_destino" list="cajasList">
+
+  <!-- Datalist compartido para sugerir cajas -->
+  <datalist id="cajasList"></datalist>
+
+    <button type="submit" id="btnRegistrar">Registrar Movimiento</button>
+    <div id="mensaje" class="mensaje"></div>
+  </form>
+
+  <script>
+    function parsearQR(valor) {
+      const limpio = valor.trim();
+      const separadores = [":", "|", "<", ";", " "];
+      let partes = [];
+
+      for (let sep of separadores) {
+        if (limpio.includes(sep)) {
+          partes = limpio.split(sep);
+          break;
+        }
+      }
+
+      if (partes.length === 2) {
+        document.getElementById("codigo").value = partes[0].trim();
+        document.getElementById("lote").value = partes[1].trim();
+      } else {
+        mostrarMensaje("❌ Formato QR no reconocido.", "error");
+      }
+    }
+
+    function actualizarCampos() {
+      const tipo = document.getElementById("tipoMovimiento").value;
+      const paciente = document.getElementById("paciente");
+      const labelPaciente = document.getElementById("label-paciente");
+      const cliente = document.getElementById("cliente");
+      const labelCliente = document.getElementById("label-cliente");
+      const origenTipo = document.getElementById("origenTipo");
+      const labelOrigenTipo = document.getElementById("label-origen-tipo");
+      const cajaOrigen = document.getElementById("caja_origen");
+      const labelCajaOrigen = document.getElementById("label-caja-origen");
+      const cajaDestino = document.getElementById("caja_destino");
+      const labelCajaDestino = document.getElementById("label-caja-destino");
+      const cantidad = document.getElementById("cantidad");
+      const labelCantidad = document.getElementById("label-cantidad");
+
+      // Ocultar todo por defecto
+      const hide = el => { if (el) el.style.display = 'none'; };
+      const show = el => { if (el) el.style.display = 'block'; };
+      hide(labelPaciente); hide(paciente);
+      hide(labelCliente); hide(cliente);
+      hide(labelOrigenTipo); hide(origenTipo);
+      hide(labelCajaOrigen); hide(cajaOrigen);
+      hide(labelCajaDestino); hide(cajaDestino);
+      hide(labelCantidad); hide(cantidad);
+
+      // Mostrar sólo lo necesario por tipo
+      if (tipo === 'Reposición') {
+        show(labelCajaDestino); show(cajaDestino);
+      } else if (tipo === 'Consumo') {
+        show(labelPaciente); show(paciente);
+        show(labelCliente); show(cliente);
+        show(labelCajaOrigen); show(cajaOrigen);
+      } else if (tipo === 'Distribución') {
+        show(labelCliente); show(cliente);
+        show(labelCantidad); show(cantidad);
+        // mostrar selector de origen (Depo/Caja)
+        show(labelOrigenTipo); show(origenTipo);
+        // cajaOrigen se mostrará sólo si origenTipo === 'Caja' en onOrigenTipoChange
+      } else if (tipo === 'Reposición Caja Completa') {
+        show(labelCajaDestino); show(cajaDestino);
+        show(labelCantidad); show(cantidad);
+      } else if (tipo === 'Entre Cajas') {
+        show(labelCajaOrigen); show(cajaOrigen);
+        show(labelCajaDestino); show(cajaDestino);
+        show(labelCantidad); show(cantidad);
+      }
+    } // ← AQUÍ cerramos correctamente la función actualizarCampos()
+
+     function enviarFormulario(e) {
+      e.preventDefault();
+      const datos = Object.fromEntries(new FormData(document.getElementById("formulario")));
+
+      const tipo = datos.tipoMovimiento || "";
+      const codigo = datos.codigo || "";
+      const lote = datos.lote || "";
+      const cantidad = datos.cantidad || "1";
+      const cajaOrigen = datos.caja_origen || "N/A";
+      const cajaDestino = datos.caja_destino || "N/A";
+      const paciente = datos.paciente || "N/A";
+      const cliente = datos.cliente || "N/A";
+
+      let resumen = `🧩 Tipo: ${tipo}\n`;
+      resumen += `🔹 Código: ${codigo}\n`;
+      resumen += `🔹 Lote: ${lote}\n`;
+      resumen += `🔹 Cantidad: ${cantidad}\n`;
+
+      if (tipo === "Entre Cajas" || tipo === "Consumo") {
+        resumen += `📤 Caja Origen: ${cajaOrigen}\n`;
+      }
+      if (tipo === "Entre Cajas" || tipo.startsWith("Reposición")) {
+        resumen += `📥 Caja Destino: ${cajaDestino}\n`;
+      }
+      if (tipo === "Consumo") {
+        resumen += `👤 Paciente: ${paciente}\n🏥 Cliente: ${cliente}\n`;
+      }
+      if (tipo === "Distribución") {
+        // incluir cliente y origen en resumen
+        const origenTipo = datos.origenTipo || '';
+        const cajaSel = datos.caja_origen || cajaOrigen || 'N/A';
+        resumen += `👥 Cliente: ${cliente}\n`;
+        resumen += `📤 Origen: ${origenTipo} ${origenTipo === 'Caja' ? '(' + cajaSel + ')' : ''}\n`;
+      }
+
+      document.getElementById("modalResumen").innerText = resumen;
+      document.getElementById("modalConfirmacion").style.display = "flex";
+
+      // Asignar eventos solo una vez
+      document.getElementById("btnConfirmar").onclick = () => confirmarEnvio(datos);
+      document.getElementById("btnCancelar").onclick = cerrarModal;
+      document.getElementById("modalFondo").onclick = cerrarModal;
+    }
+
+    function cerrarModal() {
+      document.getElementById("modalConfirmacion").style.display = "none";
+    }
+
+    function confirmarEnvio(datos) {
+      cerrarModal();
+      const btn = document.getElementById("btnRegistrar");
+      btn.disabled = true;
+      mostrarMensaje("⌛ Procesando...", "");
+
+      const qrValor = document.getElementById("campoQR").value.trim();
+      if (qrValor) parsearQR(qrValor);
+
+      google.script.run
+        .withSuccessHandler(res => {
+          if (!res) {
+            mostrarMensaje("❌ Error inesperado. Verificá los datos.", "error");
+          } else if (res.startsWith("✅")) {
+            mostrarMensaje(res, "exito");
+            document.getElementById("formulario").reset();
+          } else {
+            mostrarMensaje(res, "error");
+          }
+          actualizarCampos();
+          document.getElementById("campoQR").focus();
+          btn.disabled = false;
+        })
+        .withFailureHandler(err => {
+          mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
+          btn.disabled = false;
+        })
+        .registrarMovimiento(datos);
+    }
+
+    // Carga las cajas en el datalist compartido
+    function populateCajasList(callback) {
+      google.script.run.withSuccessHandler(function(cajas) {
+        const dl = document.getElementById('cajasList');
+        dl.innerHTML = '';
+        (cajas || []).forEach(c => {
+          const opt = document.createElement('option'); opt.value = c; dl.appendChild(opt);
+        });
+        if (typeof callback === 'function') callback(cajas);
+      }).obtenerCajasDisponibles();
+    }
+
+    // Cuando el usuario elige el tipo de origen (Depo / Caja)
+    function onOrigenTipoChange() {
+      const origen = document.getElementById('origenTipo').value;
+      const labelCaja = document.getElementById('label-caja-origen');
+      const inputCaja = document.getElementById('caja_origen');
+      if (origen === 'Caja') {
+        // mostrar input y cargar sugerencias
+        populateCajasList(function() {
+          labelCaja.style.display = inputCaja.style.display = 'block';
+        });
+      } else {
+        // ocultar input de cajas
+        labelCaja.style.display = inputCaja.style.display = 'none';
+        inputCaja.value = '';
+      }
+    }
+
+    function mostrarMensaje(msg, tipo) {
+      const mensaje = document.getElementById("mensaje");
+      mensaje.innerText = msg;
+      mensaje.className = "mensaje " + tipo;
+    }
+
+    window.onload = function () {
+      const campoQR = document.getElementById("campoQR");
+      campoQR.focus();
+      campoQR.addEventListener("keyup", e => {
+        if (e.key === "Enter") parsearQR(campoQR.value);
+      });
+      campoQR.addEventListener("change", () => parsearQR(campoQR.value));
+      // precargar sugerencias de cajas para autocompletar
+      populateCajasList();
+      actualizarCampos();
+    };
+  </script>
+
+  <!-- Modal de confirmación -->
+  <div id="modalConfirmacion" style="display:none;">
+    <div id="modalFondo"></div>
+    <div id="modalContenido">
+      <h3>Confirmar Movimiento</h3>
+      <pre id="modalResumen"></pre>
+      <div class="botones">
+        <button id="btnConfirmar" class="ok">Confirmar</button>
+        <button id="btnCancelar" class="cancel">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    #modalConfirmacion {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5);
+      z-index: 999;
+    }
+    #modalFondo {
+      position: absolute;
+      top:0; left:0; right:0; bottom:0;
+    }
+    #modalContenido {
+      position: relative;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      width: 85%;
+      max-width: 320px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+      text-align: left;
+    }
+    #modalContenido h3 {
+      margin-top: 0;
+      text-align: center;
+    }
+    #modalContenido pre {
+      background: #f7f7f7;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .botones {
+      text-align: center;
+      margin-top: 15px;
+    }
+    .botones button {
+      padding: 8px 15px;
+      margin: 0 5px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .botones .ok {
+      background-color: #4CAF50;
+      color: white;
+    }
+    .botones .cancel {
+      background-color: #ccc;
+    }
+  </style>
+
+</body>
+</html>
