@@ -14,6 +14,7 @@ function onOpen() {
     .addItem("↩️ Deshacer Movimiento...", "mostrarPromptDeshacerMovimiento")
     .addSeparator()
     .addItem("🔄 Actualizar Stock Total", "actualizarStockTotal")
+    .addItem("📋 Regenerar Trazabilidad CX", "regenerarTrazabilidadCompleta")
     .addSeparator()
     .addSubMenu(ui.createMenu("🔧 Utilidades")
       .addItem('🔍 Validar lotes desde celda...', 'pedirInicioColumna')

@@ -119,7 +119,7 @@ function registrarIngresoDesdeLiberaciones(items, observaciones) {
       "N/A",                 // Paciente
       "N/A",                 // Cliente
       obsText,               // Observaciones
-      0                      // EsConsumo
+      "N/A"                  // ID CX
     ]);
   }
 
@@ -250,7 +250,7 @@ function registrarStockRepo(datos) {
     // 📝 Registrar movimiento en Movimientos (filaMovimiento ya se usó en los logs)
     movimientosSheet.appendRow([
       new Date(), tipoRaw, codigo, lote, cantidad,
-      cajaOrigen, cajaDestino, "N/A", "N/A", observaciones, 0
+      cajaOrigen, cajaDestino, "N/A", "N/A", observaciones, "N/A"
     ]);
 
     // Limpieza & totales

@@ -93,7 +93,19 @@
     </select>
 
     <label id="label-paciente">Paciente:</label>
-    <input type="text" id="paciente" name="paciente">
+    <input type="text" id="paciente" name="paciente" list="pacientesList" autocomplete="off">
+    <datalist id="pacientesList"></datalist>
+
+    <div id="bloque-id-cx" style="display:none;">
+      <label id="label-id-cx">ID CX:</label>
+      <div style="display:flex; gap:6px; align-items:center; margin-bottom:12px;">
+        <input type="text" id="id_cx" name="idCx" placeholder="Ej: 26-000001" readonly style="flex:1; margin-bottom:0; background:#f0f0f0;">
+        <button type="button" id="btnBuscarIdCx" onclick="buscarIdCx()" style="width:auto; padding:10px 12px; font-size:13px; white-space:nowrap;">Buscar</button>
+      </div>
+      <select id="selector-id-cx" style="display:none; width:100%; margin-bottom:12px;" onchange="seleccionarIdCx(this.value)">
+        <option value="" disabled selected>Seleccioná la CX correspondiente</option>
+      </select>
+    </div>
 
     <label id="label-cliente">Cliente:</label>
     <input type="text" id="cliente" name="cliente">
@@ -168,14 +180,21 @@
       hide(labelCajaOrigen); hide(cajaOrigen);
       hide(labelCajaDestino); hide(cajaDestino);
       hide(labelCantidad); hide(cantidad);
+      document.getElementById('bloque-id-cx').style.display = 'none';
+      document.getElementById('id_cx').value = '';
+      const sel = document.getElementById('selector-id-cx');
+      sel.style.display = 'none';
+      sel.innerHTML = '<option value="" disabled selected>Seleccioná la CX correspondiente</option>';
+      document.getElementById('pacientesList').innerHTML = '';
 
       // Mostrar sólo lo necesario por tipo
       if (tipo === 'Reposición') {
         show(labelCajaDestino); show(cajaDestino);
       } else if (tipo === 'Consumo') {
         show(labelPaciente); show(paciente);
-        show(labelCliente); show(cliente);
         show(labelCajaOrigen); show(cajaOrigen);
+        document.getElementById('bloque-id-cx').style.display = 'block';
+        populatePacientesList();
       } else if (tipo === 'Distribución') {
         show(labelCliente); show(cliente);
         show(labelCantidad); show(cantidad);
@@ -217,7 +236,8 @@
         resumen += `📥 Caja Destino: ${cajaDestino}\n`;
       }
       if (tipo === "Consumo") {
-        resumen += `👤 Paciente: ${paciente}\n🏥 Cliente: ${cliente}\n`;
+        const idCx = datos.idCx || "N/A";
+        resumen += `👤 Paciente: ${paciente}\n🏥 Cliente: ${cliente}\n🔗 ID CX: ${idCx}\n`;
       }
       if (tipo === "Distribución") {
         // incluir cliente y origen en resumen
@@ -297,6 +317,70 @@
         labelCaja.style.display = inputCaja.style.display = 'none';
         inputCaja.value = '';
       }
+    }
+
+    function populatePacientesList() {
+      const dl = document.getElementById('pacientesList');
+      if (dl.childElementCount > 0) return; // ya cargado
+      google.script.run
+        .withSuccessHandler(function(nombres) {
+          dl.innerHTML = '';
+          (nombres || []).forEach(nombre => {
+            const opt = document.createElement('option');
+            opt.value = nombre;
+            dl.appendChild(opt);
+          });
+        })
+        .obtenerPacientesAgenda();
+    }
+
+    function buscarIdCx() {
+      const nombrePaciente = document.getElementById('paciente').value.trim();
+      if (!nombrePaciente) {
+        mostrarMensaje("⚠️ Ingresá el nombre del paciente antes de buscar.", "error");
+        return;
+      }
+      const btn = document.getElementById('btnBuscarIdCx');
+      const inputId = document.getElementById('id_cx');
+      const selector = document.getElementById('selector-id-cx');
+      btn.disabled = true;
+      btn.textContent = '...';
+      google.script.run
+        .withSuccessHandler(function(ids) {
+          btn.disabled = false;
+          btn.textContent = 'Buscar';
+          inputId.value = '';
+          selector.style.display = 'none';
+          selector.innerHTML = '<option value="" disabled selected>Seleccioná la CX correspondiente</option>';
+          if (!ids || ids.length === 0) {
+            mostrarMensaje("⚠️ No se encontró un ID CX para ese paciente.", "error");
+          } else if (ids.length === 1) {
+            inputId.value = ids[0];
+            mostrarMensaje("✅ ID CX encontrado: " + ids[0], "exito");
+          } else {
+            // Múltiples CX para el mismo paciente → mostrar selector
+            ids.forEach(function(id) {
+              const opt = document.createElement('option');
+              opt.value = id;
+              opt.textContent = id;
+              selector.appendChild(opt);
+            });
+            selector.style.display = 'block';
+            mostrarMensaje("⚠️ El paciente tiene " + ids.length + " CX. Seleccioná la que corresponde.", "error");
+          }
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          btn.textContent = 'Buscar';
+          mostrarMensaje("❌ Error al buscar en agenda: " + err.message, "error");
+        })
+        .buscarIdCxPorPaciente(nombrePaciente);
+    }
+
+    function seleccionarIdCx(id) {
+      document.getElementById('id_cx').value = id;
+      document.getElementById('selector-id-cx').style.display = 'none';
+      mostrarMensaje("✅ ID CX seleccionado: " + id, "exito");
     }
 
     function mostrarMensaje(msg, tipo) {

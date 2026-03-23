@@ -116,10 +116,12 @@ function registrarMovimiento(datos) {
   if (stockActualizado) {
     // Registrar en Movimientos DESPUÉS de actualización exitosa de Inventario
     const filaMovimiento = movimientosSheet.getLastRow() + 1;
-    movimientosSheet.appendRow([new Date(), tipoRaw, codigo, lote, cantidad, cajaOrigen, cajaDestino, paciente, cliente, observaciones, 0]);
+    const idCx = (tipo === "consumo") ? (datos.idCx?.toString().trim() || "N/A") : "N/A";
+    movimientosSheet.appendRow([new Date(), tipoRaw, codigo, lote, cantidad, cajaOrigen, cajaDestino, paciente, cliente, observaciones, idCx]);
     
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
     actualizarStockTotal();
+    if (tipo === "consumo") generarReporteCX(idCx);
     logInfo('Movimiento registrado correctamente', { tipo: tipoRaw, codigo, lote, cantidad, filaMovimiento });
     return "✅ Movimiento registrado correctamente.";
   } else {
@@ -133,6 +135,59 @@ function registrarMovimiento(datos) {
 // 🔀 Mover implantes entre cajas
 // Valida existencia de (Código+Lote) en caja origen y stock suficiente.
 // Ahora trabaja con la hoja Inventario unificada
+function obtenerPacientesAgenda() {
+  try {
+    const agendaSS = SpreadsheetApp.openById('1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM');
+    const hojas = agendaSS.getSheets().filter(h =>
+      h.getName().toLowerCase().startsWith('agenda')
+    );
+    const nombres = new Set();
+    hojas.forEach(sheet => {
+      const lastRow = sheet.getLastRow();
+      if (lastRow < 2) return;
+      // Columna D = Paciente (columna 4, índice 3)
+      sheet.getRange(2, 4, lastRow - 1, 1).getValues().forEach(row => {
+        const nombre = (row[0] || '').toString().trim();
+        if (nombre) nombres.add(nombre);
+      });
+    });
+    return [...nombres].sort((a, b) => a.localeCompare(b, 'es'));
+  } catch (e) {
+    logError('Error obteniendo pacientes de agenda', { error: e.message });
+    return [];
+  }
+}
+
+function buscarIdCxPorPaciente(nombre) {
+  if (!nombre || nombre.trim() === "") return null;
+  const normalizar = s => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const nombreNorm = normalizar(nombre);
+  try {
+    const agendaSS = SpreadsheetApp.openById('1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM');
+    const hojas = agendaSS.getSheets().filter(h =>
+      h.getName().toLowerCase().startsWith('agenda')
+    );
+    const coincidencias = [];
+    hojas.forEach(sheet => {
+      const lastRow = sheet.getLastRow();
+      if (lastRow < 2) return;
+      // Columna C = ID (índice 0 del rango), Columna D = Paciente (índice 1)
+      const data = sheet.getRange(2, 3, lastRow - 1, 2).getValues();
+      for (let i = data.length - 1; i >= 0; i--) {
+        const id = (data[i][0] || '').toString().trim();
+        const paciente = (data[i][1] || '').toString().trim();
+        if (id && paciente && normalizar(paciente) === nombreNorm) {
+          coincidencias.push(id);
+        }
+      }
+    });
+    return coincidencias.length > 0 ? coincidencias : null;
+  } catch (e) {
+    logError('Error buscando ID CX en agenda', { error: e.message });
+    return null;
+  }
+}
+
 function moverEntreCajas(invSheet, codigo, lote, cantidad, cajaOrigen, cajaDestino, filaMovimiento) {
   // Validaciones básicas
   if (!invSheet) throw new Error('Se requiere la hoja Inventario.');

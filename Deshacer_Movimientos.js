@@ -13,7 +13,7 @@ function deshacerMovimientoPorFila(nFila) {
   if (nFila < 2 || nFila > shMov.getLastRow()) return "❌ Número de fila inválido.";
 
   // Leer fila a anular
-  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | EsConsumo
+  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | ID CX
   const row = shMov.getRange(nFila, 1, 1, 11).getValues()[0];
   const tipoRaw = (row[1] || "").toString();
   const tipo = normalizarTipo_(tipoRaw);
@@ -25,6 +25,7 @@ function deshacerMovimientoPorFila(nFila) {
   const paciente = (row[7] || "").toString().trim();
   const cliente = (row[8] || "").toString().trim();
   const observacionesOriginal = (row[9] || "").toString().trim();
+  const idCxOriginal = (row[10] || "N/A").toString().trim();
 
   if (!codigo || !lote || !(cantidad > 0)) return "❌ La fila seleccionada no contiene datos válidos para anular.";
 
@@ -152,7 +153,7 @@ function deshacerMovimientoPorFila(nFila) {
     pacienteAnulacion, // Paciente (del movimiento original si aplica)
     clienteAnulacion, // Cliente (del movimiento original si aplica)
     `ANULACIÓN de fila ${nFila} (tipo: ${tipoRaw})${observacionesOriginal ? ' - Obs: ' + observacionesOriginal : ''}`, // Observaciones
-    0 // EsConsumo
+    idCxOriginal // ID CX (copiado del movimiento original)
   ]);
 
   // Limpieza + totales
@@ -207,7 +208,7 @@ function mostrarPromptDeshacerMovimiento() {
 
   // 2) Leer y validar fila
   const row = shMov.getRange(fila, 1, 1, 11).getValues()[0];
-  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | EsConsumo
+  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | ID CX
   const fecha = row[0] instanceof Date ? row[0] : (row[0] ? new Date(row[0]) : null);
   const tipoRaw = (row[1] || "").toString();
   const tipo = normalizarTipo_(tipoRaw);
