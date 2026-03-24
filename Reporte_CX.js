@@ -1,3 +1,5 @@
+// ─── Configuración ───────────────────────────────────────────────────────────
+// ID del Google Sheet de la Agenda CX (cambiar aquí para producción)
 const ID_AGENDA = '1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM';
 
 // Columnas de Agenda Cx (0-based desde columna A)
@@ -8,124 +10,185 @@ const AGENDA_COL_INSTITUCION = 4; // E
 const AGENDA_COL_MEDICO      = 6; // G
 const AGENDA_COL_CLIENTE     = 7; // H
 
+const MESES_ES = [
+  'Enero','Febrero','Marzo','Abril','Mayo','Junio',
+  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+];
+
 const TRAZABILIDAD_HEADERS = [
-  'ID CX', 'Fecha CX', 'Paciente', 'Institución', 'Cliente', 'Médico',
+  'Tipo', 'ID CX', 'Fecha CX', 'Paciente', 'Institución', 'Cliente', 'Médico',
   'Código', 'Lote', 'Cantidad', 'Fecha Movimiento'
 ];
 
-// Llamado automáticamente después de cada Consumo exitoso.
-// Recibe el idCx directamente para determinar el año de la CX sin ambigüedad.
-function generarReporteCX(idCx) {
-  if (!idCx || idCx === 'N/A') return;
+// Tipos que deben excluirse siempre del reporte
+const TIPOS_EXCLUIDOS = new Set([
+  'reposicion', 'reposicion caja completa', 'entre cajas',
+  'ingreso', 'ingreso desde liberaciones'
+]);
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const movSheet = ss.getSheetByName('Movimientos');
-  if (!movSheet || movSheet.getLastRow() < 2) return;
+// ─── Puntos de entrada ───────────────────────────────────────────────────────
 
-  const agendaMap = obtenerMapaAgenda_();
-  const cx = agendaMap[idCx];
-  if (!cx || !cx.fecha) {
-    logWarn('generarReporteCX: ID CX no encontrado en agenda', { idCx });
-    return;
-  }
-
-  const yearCX = new Date(cx.fecha).getFullYear();
-  if (isNaN(yearCX)) {
-    logWarn('generarReporteCX: fecha CX inválida', { idCx, fecha: cx.fecha });
-    return;
-  }
-
-  generarTrazabilidadAno_(yearCX, movSheet, agendaMap);
+// Abre el diálogo HTML con selectores de mes y año
+function generarTrazabilidadMes() {
+  const html = HtmlService.createHtmlOutputFromFile('Dialogo_Trazabilidad')
+    .setWidth(320)
+    .setHeight(340);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Generar Trazabilidad');
 }
 
-// Regenera todas las hojas de Trazabilidad (una por año de Fecha CX).
-// Para uso manual desde el menú.
+// Llamado desde el diálogo HTML. mes = 0-based (0=Enero, 11=Diciembre)
+function generarTrazabilidadDesdeMes(mes, ano) {
+  const movSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Movimientos');
+  if (!movSheet || movSheet.getLastRow() < 2) return '❌ No hay movimientos registrados.';
+  const agendaMap  = obtenerMapaAgenda_();
+  const filas      = construirFilasMes_(mes, ano, movSheet, agendaMap);
+  const nombreHoja = `Trazabilidad ${MESES_ES[mes]} ${ano}`;
+  escribirHoja_(nombreHoja, filas);
+  return `✅ "${nombreHoja}" generada con ${filas.length} registro/s.`;
+}
+
+// Regenera todas las hojas para todos los meses con datos
 function regenerarTrazabilidadCompleta() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss       = SpreadsheetApp.getActiveSpreadsheet();
   const movSheet = ss.getSheetByName('Movimientos');
   if (!movSheet || movSheet.getLastRow() < 2) {
     SpreadsheetApp.getUi().alert('No hay movimientos registrados.');
     return;
   }
-
   const agendaMap = obtenerMapaAgenda_();
-  const anos = obtenerAnosDesdeCX_(movSheet, agendaMap);
-
-  if (anos.size === 0) {
-    SpreadsheetApp.getUi().alert('No hay Consumos con ID CX vinculado a la agenda.');
+  const meses     = obtenerMesesRelevantes_(movSheet, agendaMap);
+  if (meses.length === 0) {
+    SpreadsheetApp.getUi().alert('No hay movimientos para incluir en la Trazabilidad.');
     return;
   }
-
-  anos.forEach(year => generarTrazabilidadAno_(year, movSheet, agendaMap));
-  SpreadsheetApp.getUi().alert(`✅ Trazabilidad regenerada para: ${[...anos].sort().join(', ')}`);
-}
-
-// ─── Interno ────────────────────────────────────────────────────────────────
-
-// Retorna un Set con los años (de Fecha CX) presentes en los Consumos con ID CX válido
-function obtenerAnosDesdeCX_(movSheet, agendaMap) {
-  const lastRow = movSheet.getLastRow();
-  if (lastRow < 2) return new Set();
-  const movData = movSheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  const anos = new Set();
-  movData.forEach(row => {
-    const tipo = normalizarTipo_(row[1]);
-    const idCx = (row[10] || '').toString().trim();
-    if (tipo !== 'consumo' || !idCx || idCx === 'N/A') return;
-    const cx = agendaMap[idCx];
-    if (!cx || !cx.fecha) return;
-    const y = new Date(cx.fecha).getFullYear();
-    if (!isNaN(y)) anos.add(y);
+  meses.forEach(({ mes, ano }) => {
+    const filas      = construirFilasMes_(mes, ano, movSheet, agendaMap);
+    const nombreHoja = `Trazabilidad ${MESES_ES[mes]} ${ano}`;
+    escribirHoja_(nombreHoja, filas);
   });
-  return anos;
+  const etiquetas = meses.map(({ mes, ano }) => `${MESES_ES[mes]} ${ano}`).join(', ');
+  SpreadsheetApp.getUi().alert(`✅ Trazabilidad regenerada para: ${etiquetas}`);
 }
 
-// Construye o reconstruye la hoja "Trazabilidad YYYY" filtrando por año de Fecha CX
-function generarTrazabilidadAno_(year, movSheet, agendaMap) {
-  const ss         = SpreadsheetApp.getActiveSpreadsheet();
-  const nombreHoja = 'Trazabilidad ' + year;
+// ─── Lógica interna ──────────────────────────────────────────────────────────
 
-  const lastRow = movSheet.getLastRow();
-  const consumos = lastRow < 2 ? [] : movSheet.getRange(2, 1, lastRow - 1, 11).getValues()
-    .filter(row => {
-      const tipo = normalizarTipo_(row[1]);
-      const idCx = (row[10] || '').toString().trim();
-      if (tipo !== 'consumo' || !idCx || idCx === 'N/A') return false;
-      const cx = agendaMap[idCx];
-      if (!cx || !cx.fecha) return false;
-      return new Date(cx.fecha).getFullYear() === year;
-    });
+function construirFilasMes_(mes, ano, movSheet, agendaMap) {
+  const lastRow  = movSheet.getLastRow();
+  if (lastRow < 2) return [];
 
-  let hoja = ss.getSheetByName(nombreHoja);
+  const movData  = movSheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const anuladas = getFilasAnuladas_(movData);
+  const filas    = [];
+
+  movData.forEach((row, i) => {
+    const sheetRow = i + 2; // número real de fila en el sheet (fila 1 = header)
+
+    // 1. Saltar movimientos anulados
+    if (anuladas.has(sheetRow)) return;
+
+    const tipoRaw = (row[1] || '').toString();
+    const tipo    = normalizarTipo_(tipoRaw);
+
+    // 2. Saltar anulaciones y tipos no relevantes
+    if (tipo.startsWith('anulaci') || TIPOS_EXCLUIDOS.has(tipo)) return;
+
+    const idCx    = (row[10] || '').toString().trim();
+    const fechaMov = row[0] ? new Date(row[0]) : null;
+
+    if (tipo === 'consumo') {
+      // Fecha de referencia: Fecha CX si existe, sino Fecha Movimiento
+      const cx       = agendaMap[idCx] || {};
+      const fechaCX  = cx.fecha ? new Date(cx.fecha) : null;
+      const fechaRef = fechaCX || fechaMov;
+      if (!fechaRef || fechaRef.getMonth() !== mes || fechaRef.getFullYear() !== ano) return;
+      filas.push([
+        tipoRaw,
+        idCx           || 'N/A',
+        cx.fecha       || 'N/A',
+        cx.paciente    || 'N/A',
+        cx.institucion || 'N/A',
+        cx.cliente     || 'N/A',
+        cx.medico      || 'N/A',
+        row[2], row[3], row[4], row[0]
+      ]);
+
+    } else if (tipo === 'egreso' || tipo === 'distribucion') {
+      if (!fechaMov || fechaMov.getMonth() !== mes || fechaMov.getFullYear() !== ano) return;
+      filas.push([
+        tipoRaw,
+        'N/A', 'N/A', 'N/A', 'N/A',
+        (row[8] || 'N/A').toString(), // Cliente desde Movimientos
+        'N/A',
+        row[2], row[3], row[4], row[0]
+      ]);
+    }
+  });
+
+  return filas;
+}
+
+function escribirHoja_(nombreHoja, filas) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  let hoja   = ss.getSheetByName(nombreHoja);
   if (!hoja) hoja = ss.insertSheet(nombreHoja);
   hoja.clearContents();
   hoja.getRange(1, 1, 1, TRAZABILIDAD_HEADERS.length).setValues([TRAZABILIDAD_HEADERS]);
+  if (filas.length > 0) {
+    hoja.getRange(2, 1, filas.length, TRAZABILIDAD_HEADERS.length).setValues(filas);
+  }
+  logInfo('Trazabilidad escrita', { hoja: nombreHoja, filas: filas.length });
+}
 
-  if (consumos.length === 0) return;
+// Detecta todos los meses/años con movimientos relevantes
+function obtenerMesesRelevantes_(movSheet, agendaMap) {
+  const lastRow  = movSheet.getLastRow();
+  if (lastRow < 2) return [];
+  const movData  = movSheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const anuladas = getFilasAnuladas_(movData);
+  const claves   = new Set();
 
-  const filas = consumos.map(row => {
-    const idCx = (row[10] || '').toString().trim();
-    const cx   = agendaMap[idCx] || {};
-    return [
-      idCx,
-      cx.fecha        || 'N/A',
-      cx.paciente     || 'N/A',
-      cx.institucion  || 'N/A',
-      cx.cliente      || 'N/A',
-      cx.medico       || 'N/A',
-      row[2],  // Código
-      row[3],  // Lote
-      row[4],  // Cantidad
-      row[0]   // Fecha Movimiento
-    ];
+  movData.forEach((row, i) => {
+    if (anuladas.has(i + 2)) return;
+    const tipo  = normalizarTipo_(row[1]);
+    if (tipo.startsWith('anulaci') || TIPOS_EXCLUIDOS.has(tipo)) return;
+
+    const idCx    = (row[10] || '').toString().trim();
+    const fechaMov = row[0] ? new Date(row[0]) : null;
+
+    if (tipo === 'consumo') {
+      const cx      = agendaMap[idCx] || {};
+      const fechaCX = cx.fecha ? new Date(cx.fecha) : null;
+      const fechaRef = fechaCX || fechaMov;
+      if (fechaRef && !isNaN(fechaRef)) {
+        claves.add(`${fechaRef.getFullYear()}-${fechaRef.getMonth()}`);
+      }
+    } else if (tipo === 'egreso' || tipo === 'distribucion') {
+      if (fechaMov && !isNaN(fechaMov)) {
+        claves.add(`${fechaMov.getFullYear()}-${fechaMov.getMonth()}`);
+      }
+    }
   });
 
-  hoja.getRange(2, 1, filas.length, TRAZABILIDAD_HEADERS.length).setValues(filas);
-  logInfo('Trazabilidad generada', { hoja: nombreHoja, filas: filas.length });
+  return [...claves]
+    .map(k => { const [ano, mes] = k.split('-').map(Number); return { ano, mes }; })
+    .sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes);
+}
+
+// Construye un Set con los números de fila (1-based en sheet) que fueron anulados.
+// Lee las filas de tipo "Anulación X" y extrae el número de fila original
+// del texto de observaciones: "ANULACIÓN de fila N (tipo: ...)"
+function getFilasAnuladas_(movData) {
+  const anuladas = new Set();
+  movData.forEach(row => {
+    if (!normalizarTipo_(row[1]).startsWith('anulaci')) return;
+    const match = (row[9] || '').toString().match(/de fila (\d+)/i);
+    if (match) anuladas.add(parseInt(match[1]));
+  });
+  return anuladas;
 }
 
 // Devuelve mapa { idCx -> { fecha, paciente, institucion, cliente, medico } }
-// Lee todas las hojas del spreadsheet de agenda cuyo nombre empiece con "Agenda"
+// Lee todas las hojas cuyo nombre empiece con "Agenda"
 function obtenerMapaAgenda_() {
   try {
     const agendaSS = SpreadsheetApp.openById(ID_AGENDA);
@@ -136,10 +199,11 @@ function obtenerMapaAgenda_() {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      const data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
-      data.forEach(row => {
-        const id = (row[AGENDA_COL_ID] || '').toString().trim();
-        if (!id) return;
+      // Lee columnas A-J (10 columnas); J=índice 9 = Estado
+      sheet.getRange(2, 1, lastRow - 1, 10).getValues().forEach(row => {
+        const id     = (row[AGENDA_COL_ID] || '').toString().trim();
+        const estado = (row[9]             || '').toString().trim();
+        if (!id || estado !== 'Autorizada') return;
         map[id] = {
           fecha:       row[AGENDA_COL_FECHA],
           paciente:    (row[AGENDA_COL_PACIENTE]    || '').toString().trim(),

@@ -102,13 +102,16 @@
         <input type="text" id="id_cx" name="idCx" placeholder="Ej: 26-000001" readonly style="flex:1; margin-bottom:0; background:#f0f0f0;">
         <button type="button" id="btnBuscarIdCx" onclick="buscarIdCx()" style="width:auto; padding:10px 12px; font-size:13px; white-space:nowrap;">Buscar</button>
       </div>
-      <select id="selector-id-cx" style="display:none; width:100%; margin-bottom:12px;" onchange="seleccionarIdCx(this.value)">
+      <select id="selector-id-cx" style="display:none; width:100%; margin-bottom:12px;" onchange="seleccionarIdCx(this.options[this.selectedIndex])">
         <option value="" disabled selected>Seleccioná la CX correspondiente</option>
       </select>
+      <label>Cliente:</label>
+      <input type="text" id="cliente-cx" readonly style="background:#f0f0f0; margin-bottom:0;" placeholder="Se completa al buscar el ID CX">
     </div>
 
-    <label id="label-cliente">Cliente:</label>
-    <input type="text" id="cliente" name="cliente">
+    <!-- Campo cliente editable para Distribución -->
+    <label id="label-cliente" style="display:none;">Cliente:</label>
+    <input type="text" id="cliente" style="display:none;">
 
     <label id="label-cantidad" style="display:none;">Cantidad:</label>
     <input type="number" id="cantidad" name="cantidad" min="1" style="display:none;">
@@ -130,6 +133,9 @@
 
   <!-- Datalist compartido para sugerir cajas -->
   <datalist id="cajasList"></datalist>
+
+    <!-- Campo oculto que envía el cliente al servidor para movimientos Consumo -->
+    <input type="hidden" id="cliente-hidden" name="cliente">
 
     <button type="submit" id="btnRegistrar">Registrar Movimiento</button>
     <div id="mensaje" class="mensaje"></div>
@@ -182,6 +188,7 @@
       hide(labelCantidad); hide(cantidad);
       document.getElementById('bloque-id-cx').style.display = 'none';
       document.getElementById('id_cx').value = '';
+      document.getElementById('cliente-cx').value = '';
       const sel = document.getElementById('selector-id-cx');
       sel.style.display = 'none';
       sel.innerHTML = '<option value="" disabled selected>Seleccioná la CX correspondiente</option>';
@@ -196,7 +203,7 @@
         document.getElementById('bloque-id-cx').style.display = 'block';
         populatePacientesList();
       } else if (tipo === 'Distribución') {
-        show(labelCliente); show(cliente);
+        show(labelCliente); show(cliente); cliente.removeAttribute('readonly');
         show(labelCantidad); show(cantidad);
         // mostrar selector de origen (Depo/Caja)
         show(labelOrigenTipo); show(origenTipo);
@@ -223,6 +230,20 @@
       const cajaDestino = datos.caja_destino || "N/A";
       const paciente = datos.paciente || "N/A";
       const cliente = datos.cliente || "N/A";
+      const idCx = (datos.idCx || "").trim();
+
+      // Sincronizar cliente según tipo
+      if (tipo === "Consumo") {
+        document.getElementById('cliente-hidden').value = document.getElementById('cliente-cx').value || 'N/A';
+      } else {
+        document.getElementById('cliente-hidden').value = document.getElementById('cliente').value || 'N/A';
+      }
+
+      // Validación: ID CX obligatorio para Consumo
+      if (tipo === "Consumo" && !idCx) {
+        mostrarMensaje("❌ El ID CX es obligatorio para registrar un Consumo. Buscá el paciente y seleccioná el ID.", "error");
+        return;
+      }
 
       let resumen = `🧩 Tipo: ${tipo}\n`;
       resumen += `🔹 Código: ${codigo}\n`;
@@ -236,8 +257,7 @@
         resumen += `📥 Caja Destino: ${cajaDestino}\n`;
       }
       if (tipo === "Consumo") {
-        const idCx = datos.idCx || "N/A";
-        resumen += `👤 Paciente: ${paciente}\n🏥 Cliente: ${cliente}\n🔗 ID CX: ${idCx}\n`;
+        resumen += `👤 Paciente: ${paciente}\n🔗 ID CX: ${idCx}\n`;
       }
       if (tipo === "Distribución") {
         // incluir cliente y origen en resumen
@@ -353,20 +373,22 @@
           selector.style.display = 'none';
           selector.innerHTML = '<option value="" disabled selected>Seleccioná la CX correspondiente</option>';
           if (!ids || ids.length === 0) {
-            mostrarMensaje("⚠️ No se encontró un ID CX para ese paciente.", "error");
+            mostrarMensaje("⚠️ No se encontró ninguna CX Autorizada para ese paciente.", "error");
           } else if (ids.length === 1) {
-            inputId.value = ids[0];
-            mostrarMensaje("✅ ID CX encontrado: " + ids[0], "exito");
+            inputId.value = ids[0].id;
+            document.getElementById('cliente-cx').value = ids[0].cliente;
+            mostrarMensaje("✅ ID CX encontrado: " + ids[0].id, "exito");
           } else {
-            // Múltiples CX para el mismo paciente → mostrar selector
-            ids.forEach(function(id) {
+            // Múltiples CX → mostrar selector con ID y cliente
+            ids.forEach(function(item) {
               const opt = document.createElement('option');
-              opt.value = id;
-              opt.textContent = id;
+              opt.value = item.id;
+              opt.dataset.cliente = item.cliente;
+              opt.textContent = item.id + (item.cliente ? '  —  ' + item.cliente : '');
               selector.appendChild(opt);
             });
             selector.style.display = 'block';
-            mostrarMensaje("⚠️ El paciente tiene " + ids.length + " CX. Seleccioná la que corresponde.", "error");
+            mostrarMensaje("⚠️ El paciente tiene " + ids.length + " CX autorizadas. Seleccioná la que corresponde.", "error");
           }
         })
         .withFailureHandler(function(err) {
@@ -377,8 +399,11 @@
         .buscarIdCxPorPaciente(nombrePaciente);
     }
 
-    function seleccionarIdCx(id) {
-      document.getElementById('id_cx').value = id;
+    function seleccionarIdCx(option) {
+      const id      = option.value;
+      const cliente = option.dataset.cliente || '';
+      document.getElementById('id_cx').value       = id;
+      document.getElementById('cliente-cx').value  = cliente;
       document.getElementById('selector-id-cx').style.display = 'none';
       mostrarMensaje("✅ ID CX seleccionado: " + id, "exito");
     }

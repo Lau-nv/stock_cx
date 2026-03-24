@@ -115,13 +115,11 @@ function registrarMovimiento(datos) {
 
   if (stockActualizado) {
     // Registrar en Movimientos DESPUÉS de actualización exitosa de Inventario
-    const filaMovimiento = movimientosSheet.getLastRow() + 1;
     const idCx = (tipo === "consumo") ? (datos.idCx?.toString().trim() || "N/A") : "N/A";
     movimientosSheet.appendRow([new Date(), tipoRaw, codigo, lote, cantidad, cajaOrigen, cajaDestino, paciente, cliente, observaciones, idCx]);
     
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
     actualizarStockTotal();
-    if (tipo === "consumo") generarReporteCX(idCx);
     logInfo('Movimiento registrado correctamente', { tipo: tipoRaw, codigo, lote, cantidad, filaMovimiento });
     return "✅ Movimiento registrado correctamente.";
   } else {
@@ -137,7 +135,7 @@ function registrarMovimiento(datos) {
 // Ahora trabaja con la hoja Inventario unificada
 function obtenerPacientesAgenda() {
   try {
-    const agendaSS = SpreadsheetApp.openById('1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM');
+    const agendaSS = SpreadsheetApp.openById(ID_AGENDA);
     const hojas = agendaSS.getSheets().filter(h =>
       h.getName().toLowerCase().startsWith('agenda')
     );
@@ -145,10 +143,11 @@ function obtenerPacientesAgenda() {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      // Columna D = Paciente (columna 4, índice 3)
-      sheet.getRange(2, 4, lastRow - 1, 1).getValues().forEach(row => {
+      // Columna D=Paciente(idx 0), E(1), F(2), G(3), H(4), I(5), J=Estado(6)
+      sheet.getRange(2, 4, lastRow - 1, 7).getValues().forEach(row => {
         const nombre = (row[0] || '').toString().trim();
-        if (nombre) nombres.add(nombre);
+        const estado = (row[6] || '').toString().trim();
+        if (nombre && estado === 'Autorizada') nombres.add(nombre);
       });
     });
     return [...nombres].sort((a, b) => a.localeCompare(b, 'es'));
@@ -163,7 +162,7 @@ function buscarIdCxPorPaciente(nombre) {
   const normalizar = s => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   const nombreNorm = normalizar(nombre);
   try {
-    const agendaSS = SpreadsheetApp.openById('1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM');
+    const agendaSS = SpreadsheetApp.openById(ID_AGENDA);
     const hojas = agendaSS.getSheets().filter(h =>
       h.getName().toLowerCase().startsWith('agenda')
     );
@@ -171,13 +170,15 @@ function buscarIdCxPorPaciente(nombre) {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      // Columna C = ID (índice 0 del rango), Columna D = Paciente (índice 1)
-      const data = sheet.getRange(2, 3, lastRow - 1, 2).getValues();
+      // Columna C=ID(0), D=Paciente(1), E(2), F(3), G(4), H=Cliente(5), I(6), J=Estado(7)
+      const data = sheet.getRange(2, 3, lastRow - 1, 8).getValues();
       for (let i = data.length - 1; i >= 0; i--) {
-        const id = (data[i][0] || '').toString().trim();
+        const id      = (data[i][0] || '').toString().trim();
         const paciente = (data[i][1] || '').toString().trim();
-        if (id && paciente && normalizar(paciente) === nombreNorm) {
-          coincidencias.push(id);
+        const cliente  = (data[i][5] || '').toString().trim();
+        const estado   = (data[i][7] || '').toString().trim();
+        if (id && paciente && estado === 'Autorizada' && normalizar(paciente) === nombreNorm) {
+          coincidencias.push({ id, cliente });
         }
       }
     });
@@ -319,10 +320,10 @@ function moverDeCajasAConsumo(invSheet, codigo, lote, cantidad, cajaOrigen, fila
     return "❌ Datos inválidos. Revisa código, lote, caja origen y cantidad.";
   }
 
-  // Restar de la caja origen (el consumo es una resta simple)
-  const datosLog = { tipoMovimiento: 'Consumo', filaMovimiento };
-  const resultado = restarEnInventario_(invSheet, codigo, lote, cajaOrigen, cantidad, datosLog);
-  return resultado; // true si ok, mensaje de error si falla
+  return executeWithLock_(() => {
+    const datosLog = { tipoMovimiento: 'Consumo', filaMovimiento };
+    return restarEnInventario_(invSheet, codigo, lote, cajaOrigen, cantidad, datosLog);
+  }, 'moverDeCajasAConsumo');
 }
 
 
@@ -333,10 +334,10 @@ function moverDeRepoADistribucion(invSheet, codigo, lote, cantidad, filaMovimien
     return "❌ Datos inválidos. Revisa código, lote y cantidad.";
   }
 
-  // Restar de Depo (la distribución es una resta simple)
-  const datosLog = { tipoMovimiento: 'Distribución', filaMovimiento };
-  const resultado = restarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, datosLog);
-  return resultado; // true si ok, mensaje de error si falla
+  return executeWithLock_(() => {
+    const datosLog = { tipoMovimiento: 'Distribución', filaMovimiento };
+    return restarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, datosLog);
+  }, 'moverDeRepoADistribucion');
 }
 
 

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 16px;
+      background: #f4f4f9;
+      margin: 0;
+    }
+    h3 {
+      margin-top: 0;
+      color: #333;
+      text-align: center;
+    }
+    label {
+      font-weight: bold;
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+    select {
+      width: 100%;
+      padding: 9px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .botones {
+      display: flex;
+      gap: 8px;
+      margin-top: 20px;
+    }
+    button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-generar {
+      background-color: #4CAF50;
+      color: white;
+    }
+    .btn-generar:hover { background-color: #45a049; }
+    .btn-generar:disabled { background-color: #aaa; cursor: default; }
+    .btn-cancelar {
+      background-color: #ccc;
+      color: #333;
+    }
+    .mensaje {
+      margin-top: 14px;
+      padding: 10px;
+      border-radius: 5px;
+      text-align: center;
+      font-size: 13px;
+      display: none;
+    }
+    .exito  { background: #d4edda; color: #155724; display: block; }
+    .error  { background: #f8d7da; color: #721c24; display: block; }
+    .espera { background: #fff3cd; color: #856404; display: block; }
+  </style>
+</head>
+<body>
+  <h3>📋 Generar Trazabilidad</h3>
+
+  <label>Mes:</label>
+  <select id="mes"></select>
+
+  <label>Año:</label>
+  <select id="ano"></select>
+
+  <div class="botones">
+    <button class="btn-generar" id="btnGenerar" onclick="generar()">Generar</button>
+    <button class="btn-cancelar" onclick="google.script.host.close()">Cancelar</button>
+  </div>
+
+  <div id="mensaje" class="mensaje"></div>
+
+  <script>
+    const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+    window.onload = function() {
+      const hoy = new Date();
+      const mesActual = hoy.getMonth();
+      const anoActual = hoy.getFullYear();
+
+      const selMes = document.getElementById('mes');
+      MESES.forEach((nombre, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = nombre;
+        if (i === mesActual) opt.selected = true;
+        selMes.appendChild(opt);
+      });
+
+      const selAno = document.getElementById('ano');
+      for (let y = anoActual - 3; y <= anoActual + 1; y++) {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y;
+        if (y === anoActual) opt.selected = true;
+        selAno.appendChild(opt);
+      }
+    };
+
+    function generar() {
+      const mes = parseInt(document.getElementById('mes').value);
+      const ano = parseInt(document.getElementById('ano').value);
+      const btn = document.getElementById('btnGenerar');
+      btn.disabled = true;
+      mostrar('⌛ Generando...', 'espera');
+      google.script.run
+        .withSuccessHandler(function(msg) {
+          btn.disabled = false;
+          mostrar(msg, msg.startsWith('✅') ? 'exito' : 'error');
+        })
+        .withFailureHandler(function(err) {
+          btn.disabled = false;
+          mostrar('❌ Error: ' + err.message, 'error');
+        })
+        .generarTrazabilidadDesdeMes(mes, ano);
+    }
+
+    function mostrar(msg, clase) {
+      const el = document.getElementById('mensaje');
+      el.className = 'mensaje ' + clase;
+      el.innerText = msg;
+    }
+  </script>
+</body>
+</html>

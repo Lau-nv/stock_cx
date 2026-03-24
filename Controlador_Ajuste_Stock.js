@@ -256,7 +256,6 @@ function registrarStockRepo(datos) {
     // Limpieza & totales
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
     if (typeof actualizarStockTotal === "function") actualizarStockTotal();
-
     logInfo('Ajuste registrado correctamente', { tipo: tipoRaw, codigo, lote, cantidad, filaMovimiento });
     return "✅ Movimiento registrado correctamente.";
   } else {
