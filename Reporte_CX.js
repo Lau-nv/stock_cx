@@ -1,8 +1,8 @@
-// ─── Configuración ───────────────────────────────────────────────────────────
+// ─── Configuración ────────────────────────────────────────────────────────────
 // ID del Google Sheet de la Agenda CX (cambiar aquí para producción)
 const ID_AGENDA = '1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM';
 
-// Columnas de Agenda Cx (0-based desde columna A)
+// Columnas de Agenda CX (0-based desde columna A)
 const AGENDA_COL_FECHA       = 0; // A
 const AGENDA_COL_ID          = 2; // C
 const AGENDA_COL_PACIENTE    = 3; // D
@@ -15,16 +15,50 @@ const MESES_ES = [
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
 ];
 
-const TRAZABILIDAD_HEADERS = [
-  'Tipo', 'ID CX', 'Fecha CX', 'Paciente', 'Institución', 'Cliente', 'Médico',
-  'Código', 'Lote', 'Cantidad', 'Fecha Movimiento'
+// Tipos que se muestran en el detalle del reporte.
+// Reposición y Entre cajas se usan SOLO para calcular stock, no aparecen en el detalle.
+const TIPOS_DETALLE_TRAZA = new Set([
+  'ingreso', 'ingreso desde liberaciones', 'consumo', 'distribucion', 'egreso'
+]);
+
+// Resumen y detalle usan las MISMAS columnas (A-K).
+// La fila resumen usa A-D; las filas detalle usan A-K.
+// Esto evita tener que desplazarse horizontalmente al expandir un grupo.
+const TRAZA_NUM_COLS = 11;
+
+// Columnas de la fila resumen (0-based)
+const TRAZA_S = {
+  CODIGO    : 0,  // A
+  LOTE      : 1,  // B
+  STOCK_INI : 2,  // C
+  STOCK_FIN : 3,  // D
+};
+
+// Columnas de las filas detalle (mismas posiciones, contenido diferente)
+const TRAZA_D = {
+  FECHA_MOV    : 0,  // A
+  TIPO         : 1,  // B
+  CANT         : 2,  // C
+  UBICACION    : 3,  // D
+  PACIENTE     : 4,  // E
+  CLIENTE      : 5,  // F
+  MEDICO       : 6,  // G
+  INSTITUCION  : 7,  // H
+  ID_CX        : 8,  // I
+  FECHA_CX     : 9,  // J
+  OBSERVACIONES: 10, // K
+};
+
+// Cabecera global (describe las filas resumen)
+const TRAZA_GLOBAL_HEADER = [
+  'Código', 'Lote', 'Stock Inicio', 'Stock Final', '', '', '', '', '', '', ''
 ];
 
-// Tipos que deben excluirse siempre del reporte
-const TIPOS_EXCLUIDOS = new Set([
-  'reposicion', 'reposicion caja completa', 'entre cajas',
-  'ingreso', 'ingreso desde liberaciones'
-]);
+// Mini-cabecera interna de cada grupo (describe las filas detalle)
+const TRAZA_DETAIL_HEADER = [
+  'Fecha', 'Tipo', 'Cantidad', 'Ubicación',
+  'Paciente', 'Cliente', 'Médico', 'Institución', 'ID CX', 'Fecha CX', 'Observaciones'
+];
 
 // ─── Puntos de entrada ───────────────────────────────────────────────────────
 
@@ -38,145 +72,336 @@ function generarTrazabilidadMes() {
 
 // Llamado desde el diálogo HTML. mes = 0-based (0=Enero, 11=Diciembre)
 function generarTrazabilidadDesdeMes(mes, ano) {
-  const movSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Movimientos');
-  if (!movSheet || movSheet.getLastRow() < 2) return '❌ No hay movimientos registrados.';
-  const agendaMap  = obtenerMapaAgenda_();
-  const filas      = construirFilasMes_(mes, ano, movSheet, agendaMap);
-  const nombreHoja = `Trazabilidad ${MESES_ES[mes]} ${ano}`;
-  escribirHoja_(nombreHoja, filas);
-  return `✅ "${nombreHoja}" generada con ${filas.length} registro/s.`;
+  try {
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const shMov = ss.getSheetByName('Movimientos');
+    if (!shMov || shMov.getLastRow() < 2) return '❌ No hay movimientos registrados.';
+
+    const agendaMap  = obtenerMapaAgenda_();
+    const nombreHoja = `Trazabilidad ${MESES_ES[mes]} ${ano}`;
+
+    // Leer todos los movimientos
+    const lastRow = shMov.getLastRow();
+    const movData = shMov.getRange(2, 1, lastRow - 1, 11).getValues();
+
+    // Armar lista de movimientos efectivos (excluye anulados y anulaciones)
+    const filasAnuladas = getFilasAnuladas_(movData);
+    const movEfectivos  = [];
+    for (let i = 0; i < movData.length; i++) {
+      const sheetRow = i + 2;
+      const tipo     = normalizarTipo_((movData[i][1] || '').toString());
+      if (filasAnuladas.has(sheetRow)) continue;
+      if (tipo.startsWith('anulaci')) continue;
+      movEfectivos.push({ row: movData[i], tipo });
+    }
+
+    // Límites del mes
+    const dInicio  = new Date(ano, mes, 1);
+    const dFinExcl = new Date(ano, mes + 1, 1); // exclusivo (= inicio del mes siguiente)
+
+    // Encontrar pares código/lote con al menos una SALIDA en el mes
+    // (consumo, egreso o distribución). Los ingresos solos no se incluyen
+    // porque no aportan trazabilidad de uso del implante.
+    const TIPOS_SALIDA = new Set(['consumo', 'egreso', 'distribucion']);
+    const paresConMov = new Set();
+    for (const { row, tipo } of movEfectivos) {
+      if (!TIPOS_SALIDA.has(tipo)) continue;
+      const fecha = trazaToDate_(row[0]);
+      if (!fecha || fecha < dInicio || fecha >= dFinExcl) continue;
+      const codigo = trazaNorm_(row[2]);
+      const lote   = trazaNorm_(row[3]);
+      if (codigo && lote) paresConMov.add(`${codigo}|||${lote}`);
+    }
+
+    if (paresConMov.size === 0) {
+      return `⚠️ No se encontraron movimientos en ${MESES_ES[mes]} ${ano}.`;
+    }
+
+    // ── Cálculo de stock ────────────────────────────────────────────────────
+    // Parte desde el inventario actual y deshace movimientos hacia atrás.
+    // Esto garantiza que los valores nunca sean negativos (asumiendo datos consistentes).
+    const mapActual = leerInventarioActual_(ss);
+
+    // Stock al fin del mes: deshacer todo lo que ocurrió DESPUÉS del mes
+    const mapFin = Object.assign({}, mapActual);
+    deshacerMovimientos_(mapFin,
+      movEfectivos.filter(({ row }) => {
+        const f = trazaToDate_(row[0]);
+        return f && f >= dFinExcl;
+      })
+    );
+
+    // Stock al inicio del mes: deshacer también lo que ocurrió DURANTE el mes
+    const mapInicio = Object.assign({}, mapFin);
+    deshacerMovimientos_(mapInicio,
+      movEfectivos.filter(({ row }) => {
+        const f = trazaToDate_(row[0]);
+        return f && f >= dInicio && f < dFinExcl;
+      })
+    );
+
+    // ── Construir filas ──────────────────────────────────────────────────────
+    // Estructura por grupo:
+    //   filas[N-1]   = fila resumen (siempre visible) → sheet row N
+    //   filas[N]     = mini-cabecera de detalle        → sheet row N+1  ┐ colapsable
+    //   filas[N+1..] = filas de movimiento             → sheet row N+2+ ┘
+    const tz    = ss.getSpreadsheetTimeZone() || 'America/Argentina/Buenos_Aires';
+    const filas = [TRAZA_GLOBAL_HEADER]; // filas[0] → sheet row 1
+    const groupRanges = []; // { start: índice_mini_header_en_filas, count }
+
+    for (const par of [...paresConMov].sort()) {
+      const [codigo, lote] = par.split('|||');
+
+      const stockIni = getStockTotal_(mapInicio, codigo, lote);
+      const stockFin = getStockTotal_(mapFin,    codigo, lote);
+
+      // Fila resumen
+      const resumen = new Array(TRAZA_NUM_COLS).fill('');
+      resumen[TRAZA_S.CODIGO]    = codigo;
+      resumen[TRAZA_S.LOTE]      = lote;
+      resumen[TRAZA_S.STOCK_INI] = stockIni;
+      resumen[TRAZA_S.STOCK_FIN] = stockFin;
+      filas.push(resumen);
+
+      const groupStart = filas.length; // índice de la mini-cabecera (primer row del grupo)
+
+      // Mini-cabecera interna (forma parte del grupo colapsable)
+      filas.push([...TRAZA_DETAIL_HEADER]);
+
+      // Filas detalle: solo tipos relevantes, ordenadas por fecha
+      const detalle = movEfectivos
+        .filter(({ row, tipo }) => {
+          if (!TIPOS_DETALLE_TRAZA.has(tipo)) return false;
+          if (trazaNorm_(row[2]) !== codigo || trazaNorm_(row[3]) !== lote) return false;
+          const f = trazaToDate_(row[0]);
+          return f && f >= dInicio && f < dFinExcl;
+        })
+        .sort((a, b) => trazaToDate_(a.row[0]) - trazaToDate_(b.row[0]));
+
+      for (const { row, tipo } of detalle) {
+        const cantidad      = Number(row[4] || 0);
+        const cajaOrigen    = (row[5] || '').toString().trim() || 'Depo';
+        const idCx          = (row[10] || '').toString().trim();
+        const cx            = agendaMap[idCx] || {};
+        const observaciones = (row[9] || '').toString().trim();
+
+        let signo, ubicacion;
+        switch (tipo) {
+          case 'ingreso':
+          case 'ingreso desde liberaciones':
+            signo = '+'; ubicacion = 'Depo'; break;
+          case 'consumo':
+            signo = '−'; ubicacion = cajaOrigen; break;
+          case 'distribucion':
+          case 'egreso':
+            signo = '−'; ubicacion = cajaOrigen || 'Depo'; break;
+          default:
+            signo = ''; ubicacion = cajaOrigen;
+        }
+
+        const fechaMovFmt = (() => {
+          const d = trazaToDate_(row[0]);
+          return d ? Utilities.formatDate(d, tz, 'dd/MM/yyyy') : '';
+        })();
+        const fechaCxFmt = (() => {
+          if (!cx.fecha) return '';
+          const d = trazaToDate_(cx.fecha);
+          return d ? Utilities.formatDate(d, tz, 'dd/MM/yyyy') : '';
+        })();
+
+        const det = new Array(TRAZA_NUM_COLS).fill('');
+        det[TRAZA_D.FECHA_MOV]    = fechaMovFmt;
+        det[TRAZA_D.TIPO]         = (row[1] || '').toString();
+        det[TRAZA_D.CANT]         = `${signo}${cantidad}`;
+        det[TRAZA_D.UBICACION]    = ubicacion;
+        det[TRAZA_D.PACIENTE]     = cx.paciente    || (row[7] || '').toString().trim();
+        det[TRAZA_D.CLIENTE]      = cx.cliente     || (row[8] || '').toString().trim();
+        det[TRAZA_D.MEDICO]       = cx.medico      || '';
+        det[TRAZA_D.INSTITUCION]  = cx.institucion || '';
+        det[TRAZA_D.ID_CX]        = idCx;
+        det[TRAZA_D.FECHA_CX]     = fechaCxFmt;
+        det[TRAZA_D.OBSERVACIONES] = observaciones;
+        filas.push(det);
+      }
+
+      const groupCount = filas.length - groupStart; // mini-header + data rows
+      groupRanges.push({ start: groupStart, count: groupCount });
+    }
+
+    // ── Escribir hoja ────────────────────────────────────────────────────────
+    let hoja = ss.getSheetByName(nombreHoja);
+    if (hoja) ss.deleteSheet(hoja);
+    hoja = ss.insertSheet(nombreHoja);
+
+    hoja.getRange(1, 1, filas.length, TRAZA_NUM_COLS).setValues(filas);
+
+    // Cabecera global (fila 1)
+    hoja.getRange(1, 1, 1, TRAZA_NUM_COLS)
+      .setFontWeight('bold')
+      .setBackground('#4a86c8')
+      .setFontColor('#ffffff');
+
+    // Formato por grupo:
+    //   start     → sheet row = start     (fila resumen, filas[start-1])
+    //   start+1   → sheet row = start+1   (mini-cabecera, filas[start])
+    //   start+2.. → sheet rows            (datos de movimiento)
+    for (let i = 0; i < groupRanges.length; i++) {
+      const { start, count } = groupRanges[i];
+      const summaryRow    = start;       // fila resumen
+      const miniHeaderRow = start + 1;   // mini-cabecera
+      const dataStartRow  = start + 2;   // primero dato (puede no existir si count=1)
+      const dataCount     = count - 1;   // filas de datos (excluyendo mini-header)
+
+      // Resumen: azul claro, negrita
+      hoja.getRange(summaryRow, 1, 1, TRAZA_NUM_COLS)
+        .setFontWeight('bold')
+        .setBackground('#d9e8f7');
+
+      // Mini-cabecera: gris, cursiva
+      hoja.getRange(miniHeaderRow, 1, 1, TRAZA_NUM_COLS)
+        .setFontStyle('italic')
+        .setFontWeight('bold')
+        .setBackground('#e8e8e8')
+        .setFontColor('#555555');
+
+      // Filas de datos: alternando blanco / azul muy claro
+      if (dataCount > 0) {
+        hoja.getRange(dataStartRow, 1, dataCount, TRAZA_NUM_COLS)
+          .setBackground(i % 2 === 0 ? '#f4f8fd' : '#ffffff');
+      }
+    }
+
+    // Agrupación: el +/− aparece ANTES de cada grupo (junto a la fila resumen)
+    // El grupo incluye mini-cabecera + datos → sheet rows start+1 .. start+count
+    hoja.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE);
+    for (const { start, count } of groupRanges) {
+      hoja.getRange(start + 1, 1, count, 1).shiftRowGroupDepth(1);
+    }
+    hoja.collapseAllRowGroups();
+
+    hoja.autoResizeColumns(1, TRAZA_NUM_COLS);
+
+    const totalMovs = groupRanges.reduce((s, g) => s + g.count - 1, 0); // -1 excluye mini-header
+    return `✅ "${nombreHoja}" generada: ${groupRanges.length} producto/s, ${totalMovs} movimiento/s.`;
+
+  } catch (e) {
+    return '❌ Error generando trazabilidad: ' + e.message;
+  }
 }
 
 // Regenera todas las hojas para todos los meses con datos
 function regenerarTrazabilidadCompleta() {
-  const ss       = SpreadsheetApp.getActiveSpreadsheet();
-  const movSheet = ss.getSheetByName('Movimientos');
-  if (!movSheet || movSheet.getLastRow() < 2) {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const shMov = ss.getSheetByName('Movimientos');
+  if (!shMov || shMov.getLastRow() < 2) {
     SpreadsheetApp.getUi().alert('No hay movimientos registrados.');
     return;
   }
-  const agendaMap = obtenerMapaAgenda_();
-  const meses     = obtenerMesesRelevantes_(movSheet, agendaMap);
-  if (meses.length === 0) {
+
+  const lastRow       = shMov.getLastRow();
+  const movData       = shMov.getRange(2, 1, lastRow - 1, 11).getValues();
+  const filasAnuladas = getFilasAnuladas_(movData);
+  const claves        = new Set();
+
+  for (let i = 0; i < movData.length; i++) {
+    if (filasAnuladas.has(i + 2)) continue;
+    const tipo = normalizarTipo_((movData[i][1] || '').toString());
+    if (!TIPOS_DETALLE_TRAZA.has(tipo)) continue;
+    const fecha = trazaToDate_(movData[i][0]);
+    if (fecha && !isNaN(fecha)) {
+      claves.add(`${fecha.getFullYear()}-${fecha.getMonth()}`);
+    }
+  }
+
+  if (claves.size === 0) {
     SpreadsheetApp.getUi().alert('No hay movimientos para incluir en la Trazabilidad.');
     return;
   }
-  meses.forEach(({ mes, ano }) => {
-    const filas      = construirFilasMes_(mes, ano, movSheet, agendaMap);
-    const nombreHoja = `Trazabilidad ${MESES_ES[mes]} ${ano}`;
-    escribirHoja_(nombreHoja, filas);
-  });
+
+  const meses = [...claves]
+    .map(k => { const [ano, mes] = k.split('-').map(Number); return { ano, mes }; })
+    .sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes);
+
+  meses.forEach(({ mes, ano }) => generarTrazabilidadDesdeMes(mes, ano));
+
   const etiquetas = meses.map(({ mes, ano }) => `${MESES_ES[mes]} ${ano}`).join(', ');
   SpreadsheetApp.getUi().alert(`✅ Trazabilidad regenerada para: ${etiquetas}`);
 }
 
-// ─── Lógica interna ──────────────────────────────────────────────────────────
+// ─── Helpers internos ─────────────────────────────────────────────────────────
 
-function construirFilasMes_(mes, ano, movSheet, agendaMap) {
-  const lastRow  = movSheet.getLastRow();
-  if (lastRow < 2) return [];
-
-  const movData  = movSheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  const anuladas = getFilasAnuladas_(movData);
-  const filas    = [];
-
-  movData.forEach((row, i) => {
-    const sheetRow = i + 2; // número real de fila en el sheet (fila 1 = header)
-
-    // 1. Saltar movimientos anulados
-    if (anuladas.has(sheetRow)) return;
-
-    const tipoRaw = (row[1] || '').toString();
-    const tipo    = normalizarTipo_(tipoRaw);
-
-    // 2. Saltar anulaciones y tipos no relevantes
-    if (tipo.startsWith('anulaci') || TIPOS_EXCLUIDOS.has(tipo)) return;
-
-    const idCx    = (row[10] || '').toString().trim();
-    const fechaMov = row[0] ? new Date(row[0]) : null;
-
-    if (tipo === 'consumo') {
-      // Fecha de referencia: Fecha CX si existe, sino Fecha Movimiento
-      const cx       = agendaMap[idCx] || {};
-      const fechaCX  = cx.fecha ? new Date(cx.fecha) : null;
-      const fechaRef = fechaCX || fechaMov;
-      if (!fechaRef || fechaRef.getMonth() !== mes || fechaRef.getFullYear() !== ano) return;
-      filas.push([
-        tipoRaw,
-        idCx           || 'N/A',
-        cx.fecha       || 'N/A',
-        cx.paciente    || 'N/A',
-        cx.institucion || 'N/A',
-        cx.cliente     || 'N/A',
-        cx.medico      || 'N/A',
-        row[2], row[3], row[4], row[0]
-      ]);
-
-    } else if (tipo === 'egreso' || tipo === 'distribucion') {
-      if (!fechaMov || fechaMov.getMonth() !== mes || fechaMov.getFullYear() !== ano) return;
-      filas.push([
-        tipoRaw,
-        'N/A', 'N/A', 'N/A', 'N/A',
-        (row[8] || 'N/A').toString(), // Cliente desde Movimientos
-        'N/A',
-        row[2], row[3], row[4], row[0]
-      ]);
-    }
-  });
-
-  return filas;
+// Normaliza código/lote a mayúsculas sin espacios
+function trazaNorm_(v) {
+  return (v || '').toString().trim().toUpperCase();
 }
 
-function escribirHoja_(nombreHoja, filas) {
-  const ss   = SpreadsheetApp.getActiveSpreadsheet();
-  let hoja   = ss.getSheetByName(nombreHoja);
-  if (!hoja) hoja = ss.insertSheet(nombreHoja);
-  hoja.clearContents();
-  hoja.getRange(1, 1, 1, TRAZABILIDAD_HEADERS.length).setValues([TRAZABILIDAD_HEADERS]);
-  if (filas.length > 0) {
-    hoja.getRange(2, 1, filas.length, TRAZABILIDAD_HEADERS.length).setValues(filas);
+// Convierte valor de celda a Date (null si inválido)
+function trazaToDate_(v) {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Lee el inventario actual desde la hoja Inventario.
+// Retorna: { 'CODIGO|||LOTE': totalCantidad } sumando todas las ubicaciones.
+// Usar el total evita problemas con cajaOrigen = 'N/A' o vacío en los movimientos.
+function leerInventarioActual_(ss) {
+  const invSheet = ss.getSheetByName('Inventario');
+  if (!invSheet || invSheet.getLastRow() < 2) return {};
+  // Índices 1-based según getDefaultColumnIndexInventario: codigo=2, lote=3, cantidad=4
+  const COL_COD  = 2; // B
+  const COL_LOTE = 3; // C
+  const COL_CANT = 4; // D
+  const data = invSheet.getRange(2, 1, invSheet.getLastRow() - 1, COL_CANT).getValues();
+  const map  = {};
+  for (const row of data) {
+    const codigo   = trazaNorm_(row[COL_COD  - 1]);
+    const lote     = trazaNorm_(row[COL_LOTE - 1]);
+    const cantidad = Number(row[COL_CANT - 1] || 0);
+    if (!codigo || !lote) continue;
+    const k = `${codigo}|||${lote}`;
+    map[k] = (map[k] || 0) + cantidad;
   }
-  logInfo('Trazabilidad escrita', { hoja: nombreHoja, filas: filas.length });
+  return map;
 }
 
-// Detecta todos los meses/años con movimientos relevantes
-function obtenerMesesRelevantes_(movSheet, agendaMap) {
-  const lastRow  = movSheet.getLastRow();
-  if (lastRow < 2) return [];
-  const movData  = movSheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  const anuladas = getFilasAnuladas_(movData);
-  const claves   = new Set();
-
-  movData.forEach((row, i) => {
-    if (anuladas.has(i + 2)) return;
-    const tipo  = normalizarTipo_(row[1]);
-    if (tipo.startsWith('anulaci') || TIPOS_EXCLUIDOS.has(tipo)) return;
-
-    const idCx    = (row[10] || '').toString().trim();
-    const fechaMov = row[0] ? new Date(row[0]) : null;
-
-    if (tipo === 'consumo') {
-      const cx      = agendaMap[idCx] || {};
-      const fechaCX = cx.fecha ? new Date(cx.fecha) : null;
-      const fechaRef = fechaCX || fechaMov;
-      if (fechaRef && !isNaN(fechaRef)) {
-        claves.add(`${fechaRef.getFullYear()}-${fechaRef.getMonth()}`);
-      }
-    } else if (tipo === 'egreso' || tipo === 'distribucion') {
-      if (fechaMov && !isNaN(fechaMov)) {
-        claves.add(`${fechaMov.getFullYear()}-${fechaMov.getMonth()}`);
-      }
+// Deshace el EFECTO NETO sobre el total de stock de una lista de movimientos.
+// Modifica el mapa en-place. Al operar con totales no es necesario rastrear ubicaciones,
+// lo que evita falsos resultados cuando cajaOrigen es 'N/A' o está vacío.
+//
+// Efectos netos:
+//   Ingreso / Ingreso desde lib  → +cant sobre el total  → undo = −cant
+//   Consumo / Egreso / Distrib.  → −cant sobre el total  → undo = +cant
+//   Reposición / Entre cajas     → 0 neto               → sin cambio
+function deshacerMovimientos_(mapa, movimientos) {
+  for (const { row, tipo } of movimientos) {
+    const codigo   = trazaNorm_(row[2]);
+    const lote     = trazaNorm_(row[3]);
+    const cantidad = Number(row[4] || 0);
+    if (!codigo || !lote || cantidad <= 0) continue;
+    const k = `${codigo}|||${lote}`;
+    switch (tipo) {
+      case 'ingreso':
+      case 'ingreso desde liberaciones':
+        mapa[k] = (mapa[k] || 0) - cantidad; // undo ingreso: quitar lo que entró
+        break;
+      case 'consumo':
+      case 'egreso':
+      case 'distribucion':
+        mapa[k] = (mapa[k] || 0) + cantidad; // undo salida: reponer lo que salió
+        break;
+      // reposicion / entre cajas: efecto neto = 0, no modificar total
     }
-  });
-
-  return [...claves]
-    .map(k => { const [ano, mes] = k.split('-').map(Number); return { ano, mes }; })
-    .sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes);
+  }
 }
 
-// Construye un Set con los números de fila (1-based en sheet) que fueron anulados.
-// Lee las filas de tipo "Anulación X" y extrae el número de fila original
-// del texto de observaciones: "ANULACIÓN de fila N (tipo: ...)"
+// Obtiene el stock total para un par código/lote
+function getStockTotal_(mapa, codigo, lote) {
+  return mapa[`${codigo}|||${lote}`] || 0;
+}
+
+// Construye Set con filas (1-based en sheet) que fueron anuladas
 function getFilasAnuladas_(movData) {
   const anuladas = new Set();
   movData.forEach(row => {
@@ -188,7 +413,7 @@ function getFilasAnuladas_(movData) {
 }
 
 // Devuelve mapa { idCx -> { fecha, paciente, institucion, cliente, medico } }
-// Lee todas las hojas cuyo nombre empiece con "Agenda"
+// Lee todas las hojas cuyo nombre empiece con "Agenda", filtra por estado "Autorizada"
 function obtenerMapaAgenda_() {
   try {
     const agendaSS = SpreadsheetApp.openById(ID_AGENDA);
@@ -199,7 +424,6 @@ function obtenerMapaAgenda_() {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      // Lee columnas A-J (10 columnas); J=índice 9 = Estado
       sheet.getRange(2, 1, lastRow - 1, 10).getValues().forEach(row => {
         const id     = (row[AGENDA_COL_ID] || '').toString().trim();
         const estado = (row[9]             || '').toString().trim();

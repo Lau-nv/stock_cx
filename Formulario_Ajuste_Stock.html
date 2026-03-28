@@ -52,8 +52,15 @@
       transition: background-color 0.3s;
     }
 
-    button:hover {
+    button:hover:not(:disabled) {
       background-color: #45a049;
+    }
+
+    button:disabled {
+      background-color: #b0b0b0;
+      color: #e8e8e8;
+      cursor: not-allowed;
+      opacity: 0.7;
     }
 
     .mensaje {
@@ -133,6 +140,21 @@
       border-radius:8px; padding:10px; font-size:13px;
       white-space:pre-wrap;
     }
+
+    /* Spinner — idéntico a .mensaje, solo agrega el anillo */
+    .spinner-ring {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(21,87,36,0.25);
+      border-top-color: #155724;
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+      position: relative;
+      top: -1px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -188,6 +210,10 @@
     <textarea id="observaciones" name="observaciones" rows="3"></textarea>
 
     <button type="submit" id="btnAjustar">Ajustar Stock</button>
+
+    <div id="spinnerLib" class="mensaje exito" style="display:none;">
+      <div class="spinner-ring"></div><span id="spinnerMsg"></span>
+    </div>
 
     <div id="mensaje" class="mensaje"></div>
   </form>
@@ -268,9 +294,10 @@
       const grupoEgreso = document.getElementById("grupoEgreso");
 
       if (tipo === "Ingreso desde Liberaciones") {
-        grupoManual.style.display = "none"; // Ocultamos campos de entrada
+        grupoManual.style.display = "none";
         grupoEgreso.style.display = "none";
         document.getElementById("grupoBusquedaLib").style.display = "block";
+        document.getElementById("btnAjustar").style.display = "none";
 
         // Mover el botón fuera del grupoManual para que sea visible
         const btnBuscar = document.getElementById("grupoBusquedaLib");
@@ -291,12 +318,14 @@
         grupoManual.style.display = "block";
         grupoEgreso.style.display = "block";
         document.getElementById("grupoBusquedaLib").style.display = "none";
+        document.getElementById("btnAjustar").style.display = "block";
         habilitarCamposManual();
       } else {
         // Ingreso manual
         grupoManual.style.display = "block";
         grupoEgreso.style.display = "none";
         document.getElementById("grupoBusquedaLib").style.display = "none";
+        document.getElementById("btnAjustar").style.display = "block";
         habilitarCamposManual();
       }
     }
@@ -482,11 +511,14 @@ Obs.:     ${obs}
     // Confirmación de Liberaciones (usa el modal)
     function confirmarIngresoLiberaciones() {
       cerrarModal();
-      const btn = document.getElementById("btnAjustar");
-      btn.disabled = true;
+      const btnBuscar = document.getElementById("btnBuscarLib");
+      btnBuscar.disabled = true;
+      mostrarMensaje("", "");
+      mostrarSpinner(`Registrando ${liberacionesPendientes.length} liberación/es en inventario`);
       const observaciones = (document.getElementById("observaciones").value || "LIBERACIÓN").trim() || "LIBERACIÓN";
       google.script.run
         .withSuccessHandler(msg => {
+          ocultarSpinner();
           if (!msg) {
             mostrarMensaje("❌ Error inesperado.", "error");
           } else if (msg.startsWith("✅")) {
@@ -495,11 +527,12 @@ Obs.:     ${obs}
           } else {
             mostrarMensaje(msg, "error");
           }
-          btn.disabled = false;
+          btnBuscar.disabled = false;
         })
         .withFailureHandler(err => {
+          ocultarSpinner();
           mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
-          btn.disabled = false;
+          btnBuscar.disabled = false;
         })
         .registrarIngresoDesdeLiberaciones(liberacionesPendientes, observaciones);
     }
@@ -537,9 +570,12 @@ Obs.:     ${obs}
 
     // Buscar liberaciones pendientes
     function buscarLiberaciones() {
+      const btnBuscar = document.getElementById("btnBuscarLib");
+      btnBuscar.disabled = true;
       mostrarMensaje("⌛ Buscando liberaciones pendientes...", "");
       google.script.run
         .withSuccessHandler(items => {
+          btnBuscar.disabled = false;
           liberacionesPendientes = items || [];
           if (liberacionesPendientes.length === 0) {
             mostrarMensaje("✅ No hay liberaciones pendientes para ingresar.", "exito");
@@ -549,9 +585,9 @@ Obs.:     ${obs}
             document.getElementById('tablaWrap').style.display = 'block';
 
             document.getElementById("btnConfirmarModal").onclick = confirmarIngresoLiberaciones;
-            document.getElementById("btnCancelarModal").onclick = () => { 
-              cerrarModal(); 
-              mostrarMensaje("❌ Operación cancelada por el usuario.", "error"); 
+            document.getElementById("btnCancelarModal").onclick = () => {
+              cerrarModal();
+              mostrarMensaje("❌ Operación cancelada por el usuario.", "error");
             };
 
             abrirModal("Confirmar Ingreso desde Liberaciones");
@@ -559,9 +595,18 @@ Obs.:     ${obs}
           }
         })
         .withFailureHandler(err => {
+          btnBuscar.disabled = false;
           mostrarMensaje("❌ Error al buscar liberaciones: " + err.message, "error");
         })
         .obtenerLiberacionesPendientes();
+    }
+
+    function mostrarSpinner(msg) {
+      document.getElementById("spinnerMsg").textContent = msg || "Procesando...";
+      document.getElementById("spinnerLib").style.display = "block";
+    }
+    function ocultarSpinner() {
+      document.getElementById("spinnerLib").style.display = "none";
     }
 
     // Wire up inicial
