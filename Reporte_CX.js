@@ -1,11 +1,10 @@
 // ─── Configuración ────────────────────────────────────────────────────────────
 // ID del Google Sheet de la Agenda CX (cambiar aquí para producción)
-// ID de la Agenda CX — se lee desde Script Properties para separar dev/prod.
-// Configurar en cada proyecto GAS: Configuración del proyecto → Propiedades de script
-//   Clave: ID_AGENDA
-//   DEV:  1AGvxp31Wwe6nM-tiT-I_hpg1S49aMtxEJY_8kkP-MEoVC3r-adQJfv-L
-//   PROD: 1eAzSrs1AFKljA8VY_3vDVxBSjEGXml8rBMr2SgNJrEbEBmJyurMPj0IF
-const ID_AGENDA = PropertiesService.getScriptProperties().getProperty('ID_AGENDA');
+// ID de la Agenda CX — se detecta automáticamente según el entorno.
+const _SCRIPT_ID_DEV  = '1NC5je_flA1yZE2hGEbS_kCABUImJXGt9rYZ_NLVrQx2wkKV0Bp9r8SA4';
+const _AGENDA_ID_DEV  = '1AGvxp31Wwe6nM-tiT-I_hpg1S49aMtxEJY_8kkP-MEoVC3r-adQJfv-L';
+const _AGENDA_ID_PROD = '1eAzSrs1AFKljA8VY_3vDVxBSjEGXml8rBMr2SgNJrEbEBmJyurMPj0IF';
+const ID_AGENDA = ScriptApp.getScriptId() === _SCRIPT_ID_DEV ? _AGENDA_ID_DEV : _AGENDA_ID_PROD;
 
 // Columnas de Agenda CX (0-based desde columna A)
 const AGENDA_COL_FECHA       = 0; // A
