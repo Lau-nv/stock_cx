@@ -3,6 +3,24 @@
  * Genera IDs y logs iniciales para registros existentes en Inventario
  */
 
+// ─── Configuración de entorno ────────────────────────────────────────────────
+// Correr UNA SOLA VEZ en cada proyecto GAS (dev y prod) desde el editor de Apps Script.
+// Menú superior → Ejecutar → configurarEntornoDev / configurarEntornoProd
+
+function configurarEntornoDev() {
+  PropertiesService.getScriptProperties().setProperty(
+    'ID_AGENDA', '1AGvxp31Wwe6nM-tiT-I_hpg1S49aMtxEJY_8kkP-MEoVC3r-adQJfv-L'
+  );
+  SpreadsheetApp.getUi().alert('✅ Entorno DEV configurado correctamente.');
+}
+
+function configurarEntornoProd() {
+  PropertiesService.getScriptProperties().setProperty(
+    'ID_AGENDA', '1eAzSrs1AFKljA8VY_3vDVxBSjEGXml8rBMr2SgNJrEbEBmJyurMPj0IF'
+  );
+  SpreadsheetApp.getUi().alert('✅ Entorno PROD configurado correctamente.');
+}
+
 function migrarInventarioConIDs() {
   const ui = SpreadsheetApp.getUi();
   const respuesta = ui.alert(
