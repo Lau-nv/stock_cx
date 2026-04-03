@@ -137,6 +137,10 @@
     <!-- Campo oculto que envía el cliente al servidor para movimientos Consumo -->
     <input type="hidden" id="cliente-hidden" name="cliente">
 
+    <!-- Nro. Factura: solo visible en Distribución, se concatena en observaciones al enviar -->
+    <label id="label-nro-factura" style="display:none;">Nro. Factura:</label>
+    <input type="text" id="nro_factura" style="display:none;" placeholder="Ej: FV A 0009-00002278" autocomplete="off">
+
     <button type="submit" id="btnRegistrar">Registrar Movimiento</button>
     <div id="mensaje" class="mensaje"></div>
   </form>
@@ -205,8 +209,9 @@
       } else if (tipo === 'Distribución') {
         show(labelCliente); show(cliente); cliente.removeAttribute('readonly');
         show(labelCantidad); show(cantidad);
-        // mostrar selector de origen (Depo/Caja)
         show(labelOrigenTipo); show(origenTipo);
+        document.getElementById('label-nro-factura').style.display = 'block';
+        document.getElementById('nro_factura').style.display = 'block';
         // cajaOrigen se mostrará sólo si origenTipo === 'Caja' en onOrigenTipoChange
       } else if (tipo === 'Reposición Caja Completa') {
         show(labelCajaDestino); show(cajaDestino);
@@ -237,6 +242,15 @@
         document.getElementById('cliente-hidden').value = document.getElementById('cliente-cx').value || 'N/A';
       } else {
         document.getElementById('cliente-hidden').value = document.getElementById('cliente').value || 'N/A';
+      }
+
+      // Para Distribución: concatenar Nro. Factura en observaciones si fue completado
+      if (tipo === "Distribución") {
+        const factura = document.getElementById('nro_factura').value.trim();
+        if (factura) {
+          const obsActual = (datos.observaciones || '').trim();
+          datos.observaciones = obsActual ? `${obsActual} | ${factura}` : factura;
+        }
       }
 
       // Validación: ID CX obligatorio para Consumo

@@ -7,8 +7,9 @@ const AGENDA_COL_FECHA       = 0; // A
 const AGENDA_COL_ID          = 2; // C
 const AGENDA_COL_PACIENTE    = 3; // D
 const AGENDA_COL_INSTITUCION = 4; // E
-const AGENDA_COL_MEDICO      = 6; // G
-const AGENDA_COL_CLIENTE     = 7; // H
+const AGENDA_COL_MEDICO      = 6;  // G
+const AGENDA_COL_CLIENTE     = 7;  // H
+const AGENDA_COL_FACTURA     = 15; // P
 
 const MESES_ES = [
   'Enero','Febrero','Marzo','Abril','Mayo','Junio',
@@ -24,14 +25,15 @@ const TIPOS_DETALLE_TRAZA = new Set([
 // Resumen y detalle usan las MISMAS columnas (A-K).
 // La fila resumen usa A-D; las filas detalle usan A-K.
 // Esto evita tener que desplazarse horizontalmente al expandir un grupo.
-const TRAZA_NUM_COLS = 11;
+const TRAZA_NUM_COLS = 12;
 
 // Columnas de la fila resumen (0-based)
 const TRAZA_S = {
-  CODIGO    : 0,  // A
-  LOTE      : 1,  // B
-  STOCK_INI : 2,  // C
-  STOCK_FIN : 3,  // D
+  CODIGO      : 0,  // A
+  LOTE        : 1,  // B
+  STOCK_INI   : 2,  // C
+  STOCK_FIN   : 3,  // D
+  UBICACION   : 4,  // E  ← "DEPO: 6 | CC-02: 3 | CC-03: 3" (stock final)
 };
 
 // Columnas de las filas detalle (mismas posiciones, contenido diferente)
@@ -47,17 +49,18 @@ const TRAZA_D = {
   ID_CX        : 8,  // I
   FECHA_CX     : 9,  // J
   OBSERVACIONES: 10, // K
+  FACTURA      : 11, // L
 };
 
 // Cabecera global (describe las filas resumen)
 const TRAZA_GLOBAL_HEADER = [
-  'Código', 'Lote', 'Stock Inicio', 'Stock Final', '', '', '', '', '', '', ''
+  'Código', 'Lote', 'Stock Inicio', 'Stock Final', 'Ubicación', '', '', '', '', '', '', ''
 ];
 
 // Mini-cabecera interna de cada grupo (describe las filas detalle)
 const TRAZA_DETAIL_HEADER = [
   'Fecha', 'Tipo', 'Cantidad', 'Ubicación',
-  'Paciente', 'Cliente', 'Médico', 'Institución', 'ID CX', 'Fecha CX', 'Observaciones'
+  'Paciente', 'Cliente', 'Médico', 'Institución', 'ID CX', 'Fecha CX', 'Observaciones', 'Nro. Factura'
 ];
 
 // ─── Puntos de entrada ───────────────────────────────────────────────────────
@@ -118,27 +121,23 @@ function generarTrazabilidadDesdeMes(mes, ano) {
     }
 
     // ── Cálculo de stock ────────────────────────────────────────────────────
-    // Parte desde el inventario actual y deshace movimientos hacia atrás.
-    // Esto garantiza que los valores nunca sean negativos (asumiendo datos consistentes).
+    // TOTAL (por código/lote): parte del inventario actual y deshace hacia atrás.
+    // Maneja correctamente consumos con cajaOrigen=N/A.
     const mapActual = leerInventarioActual_(ss);
+    const movsPostMes    = movEfectivos.filter(({ row }) => { const f = trazaToDate_(row[0]); return f && f >= dFinExcl; });
+    const movsDuranteMes = movEfectivos.filter(({ row }) => { const f = trazaToDate_(row[0]); return f && f >= dInicio && f < dFinExcl; });
 
-    // Stock al fin del mes: deshacer todo lo que ocurrió DESPUÉS del mes
     const mapFin = Object.assign({}, mapActual);
-    deshacerMovimientos_(mapFin,
-      movEfectivos.filter(({ row }) => {
-        const f = trazaToDate_(row[0]);
-        return f && f >= dFinExcl;
-      })
-    );
-
-    // Stock al inicio del mes: deshacer también lo que ocurrió DURANTE el mes
+    deshacerMovimientos_(mapFin, movsPostMes);
     const mapInicio = Object.assign({}, mapFin);
-    deshacerMovimientos_(mapInicio,
-      movEfectivos.filter(({ row }) => {
-        const f = trazaToDate_(row[0]);
-        return f && f >= dInicio && f < dFinExcl;
-      })
-    );
+    deshacerMovimientos_(mapInicio, movsDuranteMes);
+
+    // DESGLOSE POR UBICACIÓN: mismo enfoque pero rastreando ubicación.
+    // Si cajaOrigen='N/A' el movimiento se omite del desglose (no afecta el total).
+    const mapActualUbic = leerInventarioUbicacion_(ss);
+    const mapFinUbic = Object.assign({}, mapActualUbic);
+    deshacerPorUbicacion_(mapFinUbic, movsPostMes);
+    // mapFinUbic es suficiente: solo mostramos ubicación del stock al cierre del mes
 
     // ── Construir filas ──────────────────────────────────────────────────────
     // Estructura por grupo:
@@ -152,8 +151,9 @@ function generarTrazabilidadDesdeMes(mes, ano) {
     for (const par of [...paresConMov].sort()) {
       const [codigo, lote] = par.split('|||');
 
-      const stockIni = getStockTotal_(mapInicio, codigo, lote);
-      const stockFin = getStockTotal_(mapFin,    codigo, lote);
+      const stockIni    = getStockTotal_(mapInicio, codigo, lote);
+      const stockFin    = getStockTotal_(mapFin,    codigo, lote);
+      const porCaja = getDesgloseStr_(mapFinUbic, codigo, lote);
 
       // Fila resumen
       const resumen = new Array(TRAZA_NUM_COLS).fill('');
@@ -161,6 +161,7 @@ function generarTrazabilidadDesdeMes(mes, ano) {
       resumen[TRAZA_S.LOTE]      = lote;
       resumen[TRAZA_S.STOCK_INI] = stockIni;
       resumen[TRAZA_S.STOCK_FIN] = stockFin;
+      resumen[TRAZA_S.UBICACION] = porCaja;
       filas.push(resumen);
 
       const groupStart = filas.length; // índice de la mini-cabecera (primer row del grupo)
@@ -221,6 +222,12 @@ function generarTrazabilidadDesdeMes(mes, ano) {
         det[TRAZA_D.ID_CX]        = idCx;
         det[TRAZA_D.FECHA_CX]     = fechaCxFmt;
         det[TRAZA_D.OBSERVACIONES] = observaciones;
+        // Factura: desde agenda (consumo) o extraída de observaciones (distribución)
+        const facturaObs = (() => {
+          const m = observaciones.match(/FV\s+[A-Z]\s+\d{4}-\d+/i);
+          return m ? m[0] : '';
+        })();
+        det[TRAZA_D.FACTURA] = cx.factura || facturaObs;
         filas.push(det);
       }
 
@@ -401,6 +408,73 @@ function getStockTotal_(mapa, codigo, lote) {
   return mapa[`${codigo}|||${lote}`] || 0;
 }
 
+// Lee inventario actual por ubicación.
+// Retorna: { 'CODIGO|||LOTE|||UBICACION': cantidad }
+function leerInventarioUbicacion_(ss) {
+  const invSheet = ss.getSheetByName('Inventario');
+  if (!invSheet || invSheet.getLastRow() < 2) return {};
+  const COL_COD  = 2; const COL_LOTE = 3; const COL_CANT = 4; const COL_UBIC = 5;
+  const data = invSheet.getRange(2, 1, invSheet.getLastRow() - 1, COL_UBIC).getValues();
+  const map  = {};
+  for (const row of data) {
+    const codigo    = trazaNorm_(row[COL_COD  - 1]);
+    const lote      = trazaNorm_(row[COL_LOTE - 1]);
+    const cantidad  = Number(row[COL_CANT - 1] || 0);
+    const ubicacion = trazaNorm_(row[COL_UBIC - 1]);
+    if (!codigo || !lote || !ubicacion || ubicacion === 'N/A') continue;
+    const k = `${codigo}|||${lote}|||${ubicacion}`;
+    map[k] = (map[k] || 0) + cantidad;
+  }
+  return map;
+}
+
+// Deshace movimientos sobre un mapa por ubicación.
+// Omite movimientos con cajaOrigen/destino='N/A' o vacío (no afectan el desglose).
+function deshacerPorUbicacion_(mapa, movimientos) {
+  const add = (codigo, lote, ubicacion, delta) => {
+    const ub = trazaNorm_(ubicacion);
+    if (!ub || ub === 'N/A') return;
+    const k = `${codigo}|||${lote}|||${ub}`;
+    mapa[k] = (mapa[k] || 0) + delta;
+  };
+  for (const { row, tipo } of movimientos) {
+    const codigo   = trazaNorm_(row[2]);
+    const lote     = trazaNorm_(row[3]);
+    const cantidad = Number(row[4] || 0);
+    if (!codigo || !lote || cantidad <= 0) continue;
+    const origen  = trazaNorm_(row[5]);
+    const destino = trazaNorm_(row[6]);
+    switch (tipo) {
+      case 'ingreso':
+      case 'ingreso desde liberaciones':
+        add(codigo, lote, 'DEPO', -cantidad); break;
+      case 'reposicion':
+      case 'reposicion caja completa':
+        add(codigo, lote, origen || 'DEPO', +cantidad);
+        if (destino) add(codigo, lote, destino, -cantidad); break;
+      case 'entre cajas':
+        add(codigo, lote, origen, +cantidad);
+        if (destino) add(codigo, lote, destino, -cantidad); break;
+      case 'consumo':
+        add(codigo, lote, origen, +cantidad); break;
+      case 'distribucion':
+      case 'egreso':
+        add(codigo, lote, origen || 'DEPO', +cantidad); break;
+    }
+  }
+}
+
+// Devuelve texto de desglose por ubicación: "DEPO: 6 | CC-02: 3 | CC-03: 3"
+function getDesgloseStr_(mapaUbic, codigo, lote) {
+  const prefix = `${codigo}|||${lote}|||`;
+  const entries = Object.entries(mapaUbic)
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([k, v]) => ({ ubicacion: k.slice(prefix.length), cantidad: v }))
+    .filter(e => e.cantidad > 0)
+    .sort((a, b) => a.ubicacion.localeCompare(b.ubicacion));
+  return entries.length > 0 ? entries.map(e => `${e.ubicacion}: ${e.cantidad}`).join(' | ') : '';
+}
+
 // Construye Set con filas (1-based en sheet) que fueron anuladas
 function getFilasAnuladas_(movData) {
   const anuladas = new Set();
@@ -424,7 +498,7 @@ function obtenerMapaAgenda_() {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      sheet.getRange(2, 1, lastRow - 1, 10).getValues().forEach(row => {
+      sheet.getRange(2, 1, lastRow - 1, 16).getValues().forEach(row => {
         const id     = (row[AGENDA_COL_ID] || '').toString().trim();
         const estado = (row[9]             || '').toString().trim();
         if (!id || estado !== 'Autorizada') return;
@@ -433,7 +507,8 @@ function obtenerMapaAgenda_() {
           paciente:    (row[AGENDA_COL_PACIENTE]    || '').toString().trim(),
           institucion: (row[AGENDA_COL_INSTITUCION] || '').toString().trim(),
           medico:      (row[AGENDA_COL_MEDICO]      || '').toString().trim(),
-          cliente:     (row[AGENDA_COL_CLIENTE]     || '').toString().trim()
+          cliente:     (row[AGENDA_COL_CLIENTE]     || '').toString().trim(),
+          factura:     (row[AGENDA_COL_FACTURA]     || '').toString().trim()
         };
       });
     });
