@@ -119,7 +119,7 @@ function registrarIngresoDesdeLiberaciones(items, observaciones) {
       "N/A",                 // Paciente
       "N/A",                 // Cliente
       obsText,               // Observaciones
-      "N/A"                  // ID CX
+      0                      // EsConsumo
     ]);
   }
 
@@ -248,24 +248,15 @@ function registrarStockRepo(datos) {
 
   if (resultado) {
     // 📝 Registrar movimiento en Movimientos (filaMovimiento ya se usó en los logs)
-    const ahora = new Date();
     movimientosSheet.appendRow([
-      ahora, tipoRaw, codigo, lote, cantidad,
-      cajaOrigen, cajaDestino, "N/A", "N/A", observaciones, "N/A"
+      new Date(), tipoRaw, codigo, lote, cantidad,
+      cajaOrigen, cajaDestino, "N/A", "N/A", observaciones, 0
     ]);
-
-    // Agregar a Re-ingresos para egresos (pueden volver al inventario)
-    if (tipo === 'egreso') {
-      try {
-        agregarAReIngresos_(ss, ahora, tipoRaw, codigo, lote, cantidad, 'N/A', observaciones);
-      } catch (e) {
-        logWarn('No se pudo agregar a Re-ingresos', { error: e.message });
-      }
-    }
 
     // Limpieza & totales
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
     if (typeof actualizarStockTotal === "function") actualizarStockTotal();
+
     logInfo('Ajuste registrado correctamente', { tipo: tipoRaw, codigo, lote, cantidad, filaMovimiento });
     return "✅ Movimiento registrado correctamente.";
   } else {

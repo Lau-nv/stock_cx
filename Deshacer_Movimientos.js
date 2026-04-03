@@ -13,7 +13,7 @@ function deshacerMovimientoPorFila(nFila) {
   if (nFila < 2 || nFila > shMov.getLastRow()) return "❌ Número de fila inválido.";
 
   // Leer fila a anular
-  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | ID CX
+  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | EsConsumo
   const row = shMov.getRange(nFila, 1, 1, 11).getValues()[0];
   const tipoRaw = (row[1] || "").toString();
   const tipo = normalizarTipo_(tipoRaw);
@@ -25,7 +25,6 @@ function deshacerMovimientoPorFila(nFila) {
   const paciente = (row[7] || "").toString().trim();
   const cliente = (row[8] || "").toString().trim();
   const observacionesOriginal = (row[9] || "").toString().trim();
-  const idCxOriginal = (row[10] || "N/A").toString().trim();
 
   if (!codigo || !lote || !(cantidad > 0)) return "❌ La fila seleccionada no contiene datos válidos para anular.";
 
@@ -41,67 +40,53 @@ function deshacerMovimientoPorFila(nFila) {
   try {
     switch (tipo) {
       case 'reposicion':
-      case 'reposicion caja completa': {
-        // Reversa: Caja -> Depo (dos pasos con snapshot para rollback)
-        const snap = createSnapshot_(invSheet, 2, 1, invSheet.getLastRow() - 1, invSheet.getLastColumn());
-        try {
-          const logResta = { tipoMovimiento: 'Anulación Reposición', ubicacionOrigen: cajaDestino, ubicacionDestino: 'Depo', filaMovimiento };
-          res = restarEnInventario_(invSheet, codigo, lote, cajaDestino, cantidad, logResta);
-          if (res !== true) return res;
-          const logSuma = { tipoMovimiento: 'Anulación Reposición', ubicacionOrigen: cajaDestino, ubicacionDestino: 'Depo', filaMovimiento };
-          res = sumarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, logSuma);
-          if (res !== true) { if (snap) restoreSnapshot_(snap); return res; }
-        } catch (e2) { if (snap) restoreSnapshot_(snap); throw e2; }
+      case 'reposicion caja completa':
+        // Reversa: Caja -> Depo
+        const datosLogRestaRep = { tipoMovimiento: 'Anulación Reposición', ubicacionOrigen: cajaDestino, ubicacionDestino: 'Depo', filaMovimiento };
+        res = restarEnInventario_(invSheet, codigo, lote, cajaDestino, cantidad, datosLogRestaRep);
+        if (res !== true) return res;
+        const datosLogSumaRep = { tipoMovimiento: 'Anulación Reposición', ubicacionOrigen: cajaDestino, ubicacionDestino: 'Depo', filaMovimiento };
+        res = sumarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, datosLogSumaRep);
+        if (res !== true) return res;
         break;
-      }
 
-      case 'entre cajas': {
-        // Reversa: cajaDestino -> cajaOrigen (dos pasos con snapshot para rollback)
-        const snap = createSnapshot_(invSheet, 2, 1, invSheet.getLastRow() - 1, invSheet.getLastColumn());
-        try {
-          const logResta = { tipoMovimiento: 'Anulación Movimiento', ubicacionOrigen: cajaDestino, ubicacionDestino: cajaOrigen, filaMovimiento };
-          res = restarEnInventario_(invSheet, codigo, lote, cajaDestino, cantidad, logResta);
-          if (res !== true) return res;
-          const logSuma = { tipoMovimiento: 'Anulación Movimiento', ubicacionOrigen: cajaDestino, ubicacionDestino: cajaOrigen, filaMovimiento };
-          res = sumarEnInventario_(invSheet, codigo, lote, cajaOrigen, cantidad, logSuma);
-          if (res !== true) { if (snap) restoreSnapshot_(snap); return res; }
-        } catch (e2) { if (snap) restoreSnapshot_(snap); throw e2; }
+      case 'entre cajas':
+        // Reversa: mover de cajaDestino -> cajaOrigen
+        const datosLogRestaEC = { tipoMovimiento: 'Anulación Movimiento', ubicacionOrigen: cajaDestino, ubicacionDestino: cajaOrigen, filaMovimiento };
+        res = restarEnInventario_(invSheet, codigo, lote, cajaDestino, cantidad, datosLogRestaEC);
+        if (res !== true) return res;
+        const datosLogSumaEC = { tipoMovimiento: 'Anulación Movimiento', ubicacionOrigen: cajaDestino, ubicacionDestino: cajaOrigen, filaMovimiento };
+        res = sumarEnInventario_(invSheet, codigo, lote, cajaOrigen, cantidad, datosLogSumaEC);
+        if (res !== true) return res;
         break;
-      }
 
-      case 'consumo': {
+      case 'consumo':
+        // Reversa: reponer en cajaOrigen
         const datosLogCons = { tipoMovimiento: 'Anulación Consumo', filaMovimiento };
         res = sumarEnInventario_(invSheet, codigo, lote, cajaOrigen, cantidad, datosLogCons);
         if (res !== true) return res;
         break;
-      }
 
-      case 'distribucion': {
-        const destDist = (cajaOrigen && cajaOrigen !== "N/A" && cajaOrigen !== "DEPO") ? cajaOrigen : 'Depo';
+      case 'distribucion':
+        // Reversa: reponer en Depo
         const datosLogDist = { tipoMovimiento: 'Anulación Distribución', filaMovimiento };
-        res = sumarEnInventario_(invSheet, codigo, lote, destDist, cantidad, datosLogDist);
+        res = sumarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, datosLogDist);
         if (res !== true) return res;
         break;
-      }
-
-      case 'egreso': {
-        const destEg = (cajaOrigen && cajaOrigen !== "N/A") ? cajaOrigen : 'Depo';
-        const datosLogEg = { tipoMovimiento: 'Anulación Egreso', filaMovimiento };
-        res = sumarEnInventario_(invSheet, codigo, lote, destEg, cantidad, datosLogEg);
-        if (res !== true) return res;
-        break;
-      }
-
+        
       case 'ingreso':
-      case 'ingreso desde liberaciones': {
+      case 'ingreso desde liberaciones':
+        // Reversa: restar de Depo
         const datosLogIng = { tipoMovimiento: 'Anulación Ingreso', filaMovimiento };
         res = restarEnInventario_(invSheet, codigo, lote, 'Depo', cantidad, datosLogIng);
         if (res !== true) return res;
         break;
-      }
+
+      case 'anulacion':
+      case 'anulación':
+        return "❌ No se puede anular una anulación.";
 
       default:
-        if (tipo.startsWith('anulaci')) return "❌ No se puede anular una anulación.";
         return `❌ Tipo de movimiento no soportado para deshacer: "${tipoRaw}".`;
     }
   } catch (e) {
@@ -139,18 +124,14 @@ function deshacerMovimientoPorFila(nFila) {
       
     case 'distribucion':
       tipoAnulacion = "Anulación Distribución";
-      origenAnulacion = "N/A";
-      destinoAnulacion = (cajaOrigen && cajaOrigen !== "N/A" && cajaOrigen !== "DEPO") ? cajaOrigen : "DEPO";
-      clienteAnulacion = cliente || "N/A";
+      origenAnulacion = "N/A"; // La distribución no tiene origen físico en la reversa
+      destinoAnulacion = "DEPO"; // Vuelve a Depo (o a la caja si era desde caja)
+      if (cajaOrigen && cajaOrigen !== "N/A" && cajaOrigen !== "DEPO") {
+        destinoAnulacion = cajaOrigen; // Si la distribución era desde una caja
+      }
+      clienteAnulacion = cliente || "N/A"; // Mantener info del cliente original
       break;
-
-    case 'egreso':
-      tipoAnulacion = "Anulación Egreso";
-      origenAnulacion = "N/A";
-      destinoAnulacion = (cajaOrigen && cajaOrigen !== "N/A") ? cajaOrigen : "DEPO";
-      clienteAnulacion = cliente || "N/A";
-      break;
-
+      
     case 'ingreso':
     case 'ingreso desde liberaciones':
       tipoAnulacion = "Anulación Ingreso";
@@ -171,7 +152,7 @@ function deshacerMovimientoPorFila(nFila) {
     pacienteAnulacion, // Paciente (del movimiento original si aplica)
     clienteAnulacion, // Cliente (del movimiento original si aplica)
     `ANULACIÓN de fila ${nFila} (tipo: ${tipoRaw})${observacionesOriginal ? ' - Obs: ' + observacionesOriginal : ''}`, // Observaciones
-    idCxOriginal // ID CX (copiado del movimiento original)
+    0 // EsConsumo
   ]);
 
   // Limpieza + totales
@@ -192,7 +173,7 @@ function existeAnulacionDeFila_(shMov, nFila) {
   for (let i = 0; i < data.length; i++) {
     const tipo = normalizarTipo_(data[i][1]);
     const obs = (data[i][9] || "").toString();
-    if (tipo.startsWith('anulaci') && needle.test(obs)) {
+    if ((tipo === 'anulacion' || tipo === 'anulación') && needle.test(obs)) {
       return true;
     }
   }
@@ -226,7 +207,7 @@ function mostrarPromptDeshacerMovimiento() {
 
   // 2) Leer y validar fila
   const row = shMov.getRange(fila, 1, 1, 11).getValues()[0];
-  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | ID CX
+  // Columnas: Fecha y Hora | Tipo | Código | Lote | Cantidad | Caja Origen | Caja Destino | Paciente | Cliente | Observaciones | EsConsumo
   const fecha = row[0] instanceof Date ? row[0] : (row[0] ? new Date(row[0]) : null);
   const tipoRaw = (row[1] || "").toString();
   const tipo = normalizarTipo_(tipoRaw);
@@ -243,7 +224,7 @@ function mostrarPromptDeshacerMovimiento() {
     ui.alert("❌ La fila seleccionada no contiene datos válidos para anular.");
     return;
   }
-  if (tipo.startsWith('anulaci')) {
+  if (tipo === 'anulacion' || tipo === 'anulación') {
     ui.alert("❌ No se puede anular una anulación.");
     return;
   }
@@ -294,14 +275,8 @@ function describirReversa_(tipoNorm, ctx) {
       return `Se MUEVE la cantidad desde la caja DESTINO (${ctx.cajaDestino}) hacia la caja ORIGEN (${ctx.cajaOrigen}).`;
     case 'consumo':
       return `Se REPONE la cantidad en la caja ORIGEN (${ctx.cajaOrigen}).`;
-    case 'distribucion': {
-      const d = (ctx.cajaOrigen && ctx.cajaOrigen !== "N/A" && ctx.cajaOrigen !== "DEPO") ? ctx.cajaOrigen : 'Depo';
-      return `Se REPONE la cantidad en ${d}.`;
-    }
-    case 'egreso': {
-      const d = (ctx.cajaOrigen && ctx.cajaOrigen !== "N/A") ? ctx.cajaOrigen : 'Depo';
-      return `Se REPONE la cantidad en ${d}.`;
-    }
+    case 'distribucion':
+      return `Se REPONE la cantidad en Depo.`;
     case 'ingreso':
     case 'ingreso desde liberaciones':
       return `Se RESTA la cantidad en Depo.`;
