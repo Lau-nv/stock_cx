@@ -17,6 +17,8 @@ function onOpen() {
     .addSeparator()
     .addItem("📋 Generar Trazabilidad Mensual", "generarTrazabilidadMes")
     .addSeparator()
+    .addItem("↩️ Procesar Re-ingresos", "procesarReIngresos")
+    .addSeparator()
     .addSubMenu(ui.createMenu("🔧 Utilidades")
       .addItem('🔍 Validar lotes desde celda...', 'pedirInicioColumna')
       .addItem('🔐 Validar IDs de Inventario', 'validarIDsInventario')

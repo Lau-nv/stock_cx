@@ -116,8 +116,18 @@ function registrarMovimiento(datos) {
   if (stockActualizado) {
     // Registrar en Movimientos DESPUÉS de actualización exitosa de Inventario
     const idCx = (tipo === "consumo") ? (datos.idCx?.toString().trim() || "N/A") : "N/A";
-    movimientosSheet.appendRow([new Date(), tipoRaw, codigo, lote, cantidad, cajaOrigen, cajaDestino, paciente, cliente, observaciones, idCx]);
-    
+    const ahora = new Date();
+    movimientosSheet.appendRow([ahora, tipoRaw, codigo, lote, cantidad, cajaOrigen, cajaDestino, paciente, cliente, observaciones, idCx]);
+
+    // Agregar a Re-ingresos para distribuciones (pueden volver al inventario)
+    if (tipo === 'distribucion') {
+      try {
+        agregarAReIngresos_(ss, ahora, tipoRaw, codigo, lote, cantidad, cliente, observaciones);
+      } catch (e) {
+        logWarn('No se pudo agregar a Re-ingresos', { error: e.message });
+      }
+    }
+
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
     actualizarStockTotal();
     logInfo('Movimiento registrado correctamente', { tipo: tipoRaw, codigo, lote, cantidad, filaMovimiento });

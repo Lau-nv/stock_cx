@@ -248,10 +248,20 @@ function registrarStockRepo(datos) {
 
   if (resultado) {
     // 📝 Registrar movimiento en Movimientos (filaMovimiento ya se usó en los logs)
+    const ahora = new Date();
     movimientosSheet.appendRow([
-      new Date(), tipoRaw, codigo, lote, cantidad,
+      ahora, tipoRaw, codigo, lote, cantidad,
       cajaOrigen, cajaDestino, "N/A", "N/A", observaciones, "N/A"
     ]);
+
+    // Agregar a Re-ingresos para egresos (pueden volver al inventario)
+    if (tipo === 'egreso') {
+      try {
+        agregarAReIngresos_(ss, ahora, tipoRaw, codigo, lote, cantidad, 'N/A', observaciones);
+      } catch (e) {
+        logWarn('No se pudo agregar a Re-ingresos', { error: e.message });
+      }
+    }
 
     // Limpieza & totales
     // limpiarCeros(['Inventario']); // ✅ Deshabilitado: ahora mantenemos lotes en 0 para trazabilidad
