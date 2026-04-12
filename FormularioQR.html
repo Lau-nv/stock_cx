@@ -225,6 +225,15 @@
 
      function enviarFormulario(e) {
       e.preventDefault();
+
+      // Sincronizar cliente-hidden ANTES de capturar FormData
+      const tipoPreview = document.getElementById("tipoMovimiento")?.value || "";
+      if (tipoPreview === "Consumo") {
+        document.getElementById('cliente-hidden').value = document.getElementById('cliente-cx').value || 'N/A';
+      } else {
+        document.getElementById('cliente-hidden').value = document.getElementById('cliente').value || 'N/A';
+      }
+
       const datos = Object.fromEntries(new FormData(document.getElementById("formulario")));
 
       const tipo = datos.tipoMovimiento || "";
@@ -236,13 +245,6 @@
       const paciente = datos.paciente || "N/A";
       const cliente = datos.cliente || "N/A";
       const idCx = (datos.idCx || "").trim();
-
-      // Sincronizar cliente según tipo
-      if (tipo === "Consumo") {
-        document.getElementById('cliente-hidden').value = document.getElementById('cliente-cx').value || 'N/A';
-      } else {
-        document.getElementById('cliente-hidden').value = document.getElementById('cliente').value || 'N/A';
-      }
 
       // Para Distribución: concatenar Nro. Factura en observaciones si fue completado
       if (tipo === "Distribución") {
