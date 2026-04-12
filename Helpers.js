@@ -216,7 +216,7 @@ function validarLimitesOperacion_(cantidad, contexto = {}) {
 }
 
 /*** SISTEMA DE BLOQUEO (LOCKS) ***/
-function executeWithLock_(operation, lockKey, timeoutMs = 5000) {
+function executeWithLock_(operation, lockKey, timeoutMs = 10000) {
   const lock = LockService.getScriptLock();
   const startTime = new Date().getTime();
   
