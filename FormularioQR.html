@@ -296,11 +296,12 @@
       document.getElementById("modalConfirmacion").style.display = "none";
     }
 
-    function confirmarEnvio(datos) {
+    function confirmarEnvio(datos, intento) {
       cerrarModal();
+      intento = intento || 1;
       const btn = document.getElementById("btnRegistrar");
       btn.disabled = true;
-      mostrarMensaje("⌛ Procesando...", "");
+      mostrarMensaje(intento > 1 ? `⌛ Reintentando (intento ${intento})...` : "⌛ Procesando...", "");
 
       const qrValor = document.getElementById("campoQR").value.trim();
       if (qrValor) parsearQR(qrValor);
@@ -320,8 +321,13 @@
           btn.disabled = false;
         })
         .withFailureHandler(err => {
-          mostrarMensaje("❌ Error en el servidor: " + err.message, "error");
-          btn.disabled = false;
+          if (intento < 3) {
+            // Reintento automático para errores transitorios de Google
+            setTimeout(() => confirmarEnvio(datos, intento + 1), 2000);
+          } else {
+            mostrarMensaje("❌ Error al registrar el movimiento. El servidor no respondió después de 3 intentos. Intentá de nuevo en unos segundos.", "error");
+            btn.disabled = false;
+          }
         })
         .registrarMovimiento(datos);
     }
