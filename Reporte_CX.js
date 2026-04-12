@@ -2,7 +2,7 @@
 // ID del Google Sheet de la Agenda CX (cambiar aquí para producción)
 // ID de la Agenda CX — se detecta automáticamente según el entorno.
 const _SCRIPT_ID_DEV  = '1NC5je_flA1yZE2hGEbS_kCABUImJXGt9rYZ_NLVrQx2wkKV0Bp9r8SA4';
-const _AGENDA_ID_DEV  = '1guvBM_eSPy5qQL-yFgGgd05MP1YRGoNorsSsTE-dsH8';
+const _AGENDA_ID_DEV  = '1Kg3J6dTS2SaUvz5AhDB8i6hgfLrUO_E9j43ymNxrxoM';
 const _AGENDA_ID_PROD = '199f6G7W8LFkT6nspiZ1KrtdHZpAGSTTywFtOonPI9_U';
 const ID_AGENDA = ScriptApp.getScriptId() === _SCRIPT_ID_DEV ? _AGENDA_ID_DEV : _AGENDA_ID_PROD;
 
