@@ -125,9 +125,9 @@ function generarTrazabilidadDesdeMes(mes, ano) {
     }
 
     // ── Cálculo de stock ────────────────────────────────────────────────────
-    // TOTAL (por código/lote): parte del inventario actual y deshace hacia atrás.
-    // Maneja correctamente consumos con cajaOrigen=N/A.
-    const mapActual = leerInventarioActual_(ss);
+    // Lectura única del inventario (total + por ubicación en un solo pass)
+    const { total: mapActual, ubicacion: mapActualUbic } = leerInventario_(ss);
+
     const movsPostMes    = movEfectivos.filter(({ row }) => { const f = trazaToDate_(row[0]); return f && f >= dFinExcl; });
     const movsDuranteMes = movEfectivos.filter(({ row }) => { const f = trazaToDate_(row[0]); return f && f >= dInicio && f < dFinExcl; });
 
@@ -136,12 +136,8 @@ function generarTrazabilidadDesdeMes(mes, ano) {
     const mapInicio = Object.assign({}, mapFin);
     deshacerMovimientos_(mapInicio, movsDuranteMes);
 
-    // DESGLOSE POR UBICACIÓN: mismo enfoque pero rastreando ubicación.
-    // Si cajaOrigen='N/A' el movimiento se omite del desglose (no afecta el total).
-    const mapActualUbic = leerInventarioUbicacion_(ss);
     const mapFinUbic = Object.assign({}, mapActualUbic);
     deshacerPorUbicacion_(mapFinUbic, movsPostMes);
-    // mapFinUbic es suficiente: solo mostramos ubicación del stock al cierre del mes
 
     // ── Construir filas ──────────────────────────────────────────────────────
     // Estructura por grupo:
@@ -252,45 +248,42 @@ function generarTrazabilidadDesdeMes(mes, ano) {
       .setBackground('#4a86c8')
       .setFontColor('#ffffff');
 
-    // Formato por grupo:
-    //   start     → sheet row = start     (fila resumen, filas[start-1])
-    //   start+1   → sheet row = start+1   (mini-cabecera, filas[start])
-    //   start+2.. → sheet rows            (datos de movimiento)
+    // Formato por grupo — batching con getRangeList para minimizar llamadas API
+    const rngResumen    = [];
+    const rngMiniHeader = [];
+    const rngDataPar    = [];
+    const rngDataImpar  = [];
+
     for (let i = 0; i < groupRanges.length; i++) {
       const { start, count } = groupRanges[i];
-      const summaryRow    = start;       // fila resumen
-      const miniHeaderRow = start + 1;   // mini-cabecera
-      const dataStartRow  = start + 2;   // primero dato (puede no existir si count=1)
-      const dataCount     = count - 1;   // filas de datos (excluyendo mini-header)
-
-      // Resumen: azul claro, negrita
-      hoja.getRange(summaryRow, 1, 1, TRAZA_NUM_COLS)
-        .setFontWeight('bold')
-        .setBackground('#d9e8f7');
-
-      // Mini-cabecera: gris, cursiva
-      hoja.getRange(miniHeaderRow, 1, 1, TRAZA_NUM_COLS)
-        .setFontStyle('italic')
-        .setFontWeight('bold')
-        .setBackground('#e8e8e8')
-        .setFontColor('#555555');
-
-      // Filas de datos: alternando blanco / azul muy claro
+      const dataCount = count - 1;
+      rngResumen.push(`A${start}:L${start}`);
+      rngMiniHeader.push(`A${start + 1}:L${start + 1}`);
       if (dataCount > 0) {
-        hoja.getRange(dataStartRow, 1, dataCount, TRAZA_NUM_COLS)
-          .setBackground(i % 2 === 0 ? '#f4f8fd' : '#ffffff');
+        const r = `A${start + 2}:L${start + 1 + dataCount}`;
+        (i % 2 === 0 ? rngDataPar : rngDataImpar).push(r);
       }
     }
 
-    // Agrupación: el +/− aparece ANTES de cada grupo (junto a la fila resumen)
-    // El grupo incluye mini-cabecera + datos → sheet rows start+1 .. start+count
+    if (rngResumen.length)
+      hoja.getRangeList(rngResumen).setFontWeight('bold').setBackground('#d9e8f7');
+    if (rngMiniHeader.length)
+      hoja.getRangeList(rngMiniHeader).setFontStyle('italic').setFontWeight('bold').setBackground('#e8e8e8').setFontColor('#555555');
+    if (rngDataPar.length)
+      hoja.getRangeList(rngDataPar).setBackground('#f4f8fd');
+    if (rngDataImpar.length)
+      hoja.getRangeList(rngDataImpar).setBackground('#ffffff');
+
+    // Agrupación de filas
     hoja.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE);
     for (const { start, count } of groupRanges) {
       hoja.getRange(start + 1, 1, count, 1).shiftRowGroupDepth(1);
     }
     hoja.collapseAllRowGroups();
 
-    hoja.autoResizeColumns(1, TRAZA_NUM_COLS);
+    // Anchos de columna fijos (más rápido que autoResizeColumns)
+    const colWidths = [90, 130, 60, 60, 120, 100, 90, 110, 140, 100, 200, 150];
+    colWidths.forEach((w, i) => { if (i < TRAZA_NUM_COLS) hoja.setColumnWidth(i + 1, w); });
 
     const totalMovs = groupRanges.reduce((s, g) => s + g.count - 1, 0); // -1 excluye mini-header
     return `✅ "${nombreHoja}" generada: ${groupRanges.length} producto/s, ${totalMovs} movimiento/s.`;
@@ -352,6 +345,29 @@ function trazaToDate_(v) {
   if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// Lee inventario actual en un único pass.
+// Retorna: { total: { 'COD|||LOTE': cant }, ubicacion: { 'COD|||LOTE|||UBIC': cant } }
+function leerInventario_(ss) {
+  const invSheet = ss.getSheetByName('Inventario');
+  if (!invSheet || invSheet.getLastRow() < 2) return { total: {}, ubicacion: {} };
+  const data = invSheet.getRange(2, 1, invSheet.getLastRow() - 1, 5).getValues();
+  const total = {}, ubicacion = {};
+  for (const row of data) {
+    const codigo = trazaNorm_(row[1]); // col B
+    const lote   = trazaNorm_(row[2]); // col C
+    const cant   = Number(row[3] || 0); // col D
+    const ubic   = trazaNorm_(row[4]); // col E
+    if (!codigo || !lote) continue;
+    const k = `${codigo}|||${lote}`;
+    total[k] = (total[k] || 0) + cant;
+    if (ubic && ubic !== 'N/A') {
+      const ku = `${k}|||${ubic}`;
+      ubicacion[ku] = (ubicacion[ku] || 0) + cant;
+    }
+  }
+  return { total, ubicacion };
 }
 
 // Lee el inventario actual desde la hoja Inventario.
