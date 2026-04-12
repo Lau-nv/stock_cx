@@ -180,15 +180,24 @@ function buscarIdCxPorPaciente(nombre) {
     hojas.forEach(sheet => {
       const lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
-      // Columna C=ID(0), D=Paciente(1), E(2), F(3), G(4), H=Cliente(5), I(6), J=Estado(7)
-      const data = sheet.getRange(2, 3, lastRow - 1, 8).getValues();
+      // Columna A=Fecha(0), B(1), C=ID(2), D=Paciente(3), E(4), F(5), G(6), H=Cliente(7), I(8), J=Estado(9)
+      const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
       for (let i = data.length - 1; i >= 0; i--) {
-        const id      = (data[i][0] || '').toString().trim();
-        const paciente = (data[i][1] || '').toString().trim();
-        const cliente  = (data[i][5] || '').toString().trim();
-        const estado   = (data[i][7] || '').toString().trim();
+        const fechaRaw = data[i][0];
+        const id       = (data[i][2] || '').toString().trim();
+        const paciente = (data[i][3] || '').toString().trim();
+        const cliente  = (data[i][7] || '').toString().trim();
+        const estado   = (data[i][9] || '').toString().trim();
         if (id && paciente && estado === 'Autorizada' && normalizar(paciente) === nombreNorm) {
-          coincidencias.push({ id, cliente });
+          let fechaStr = '';
+          if (fechaRaw instanceof Date && !isNaN(fechaRaw)) {
+            const d = fechaRaw.getDate().toString().padStart(2, '0');
+            const m = (fechaRaw.getMonth() + 1).toString().padStart(2, '0');
+            fechaStr = `${d}/${m}/${fechaRaw.getFullYear()}`;
+          } else if (fechaRaw) {
+            fechaStr = fechaRaw.toString().trim();
+          }
+          coincidencias.push({ id, cliente, fechaCx: fechaStr });
         }
       }
     });

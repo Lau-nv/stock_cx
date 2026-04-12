@@ -393,14 +393,18 @@
           } else if (ids.length === 1) {
             inputId.value = ids[0].id;
             document.getElementById('cliente-cx').value = ids[0].cliente;
-            mostrarMensaje("✅ ID CX encontrado: " + ids[0].id, "exito");
+            const fechaMsg = ids[0].fechaCx ? '  —  ' + ids[0].fechaCx : '';
+            mostrarMensaje("✅ ID CX encontrado: " + ids[0].id + fechaMsg, "exito");
           } else {
-            // Múltiples CX → mostrar selector con ID y cliente
+            // Múltiples CX → mostrar selector con ID, fecha y cliente
             ids.forEach(function(item) {
               const opt = document.createElement('option');
               opt.value = item.id;
               opt.dataset.cliente = item.cliente;
-              opt.textContent = item.id + (item.cliente ? '  —  ' + item.cliente : '');
+              let label = item.id;
+              if (item.fechaCx) label += '  —  ' + item.fechaCx;
+              if (item.cliente) label += '  —  ' + item.cliente;
+              opt.textContent = label;
               selector.appendChild(opt);
             });
             selector.style.display = 'block';
