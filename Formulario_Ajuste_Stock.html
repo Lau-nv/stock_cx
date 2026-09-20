@@ -258,6 +258,26 @@
 
     function parsearQR(valor) {
       const limpio = valor.trim();
+
+      // Formato nuevo: URL con parámetros ?cod=...&lote=...
+      if (/^https?:\/\//i.test(limpio)) {
+        try {
+          const url = new URL(limpio);
+          const cod = url.searchParams.get("cod");
+          const lote = url.searchParams.get("lote");
+          if (cod && lote) {
+            document.getElementById("codigo").value = cod.trim();
+            document.getElementById("lote").value   = lote.trim();
+            document.getElementById("campoQR").value = "";
+            document.getElementById("cantidad").focus();
+            return;
+          }
+        } catch (e) {
+          // no es una URL válida, cae al formato viejo
+        }
+      }
+
+      // Formato viejo: codigo<separador>lote
       const separadores = [":", "|", "<", ";", " "];
       let partes = [];
       for (let sep of separadores) {
